@@ -1,6 +1,7 @@
 import { Product, SearchResponse, Marketplace, MarketplaceStatus } from "@shared/schema";
 
-const BACKEND_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+// Is line ko purani wali ki jagah paste kar dein
+const BACKEND_URL = import.meta.env.VITE_API_URL || "https://kartowl-production-8370.up.railway.app/api";
 
 // Default marketplace status for error cases
 const defaultMarketplaceStatus: Record<Marketplace, MarketplaceStatus> = {
