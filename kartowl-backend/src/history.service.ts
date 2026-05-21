@@ -19,13 +19,14 @@ export class HistoryService {
   constructor(
     @InjectRepository(ProductHistory)
     private historyRepository: Repository<ProductHistory>,
-  ) { }
+  ) {}
 
   async addPricePoint(params: AddPricePointParams) {
     const cleanUrl = normalizeUrl(params.url);
 
     // Prevent spam: Check if we already saved this URL today
-    const existingToday = await this.historyRepository.createQueryBuilder('history')
+    const existingToday = await this.historyRepository
+      .createQueryBuilder('history')
       .where('history.productUrl = :url', { url: cleanUrl })
       .andWhere('history.scrapedAt > current_date')
       .getOne();
@@ -51,7 +52,7 @@ export class HistoryService {
     const cleanUrl = normalizeUrl(rawUrl);
     return await this.historyRepository.find({
       where: { productUrl: cleanUrl },
-      order: { scrapedAt: 'ASC' }
+      order: { scrapedAt: 'ASC' },
     });
   }
 
@@ -65,7 +66,7 @@ export class HistoryService {
 
     // Run queries in parallel
     const results = await Promise.all(
-      marketplaces.map(mp =>
+      marketplaces.map((mp) =>
         this.historyRepository.find({
           where: {
             marketplace: mp,
@@ -76,8 +77,8 @@ export class HistoryService {
             scrapedAt: 'DESC',
           },
           take: 5,
-        })
-      )
+        }),
+      ),
     );
 
     // Combine and shuffle results
@@ -85,14 +86,16 @@ export class HistoryService {
 
     // Deduplicate by productUrl (keep only the most recent entry per product)
     const seen = new Set<string>();
-    const uniqueDeals = deals.filter(deal => {
-      if (seen.has(deal.productUrl)) return false;
-      seen.add(deal.productUrl);
-      return true;
-    }).slice(0, 20); // Return top 20
+    const uniqueDeals = deals
+      .filter((deal) => {
+        if (seen.has(deal.productUrl)) return false;
+        seen.add(deal.productUrl);
+        return true;
+      })
+      .slice(0, 20); // Return top 20
 
     // Transform to match Product type expected by frontend
-    return uniqueDeals.map(deal => ({
+    return uniqueDeals.map((deal) => ({
       id: deal.id,
       title: deal.productTitle,
       image: deal.imageUrl || '',

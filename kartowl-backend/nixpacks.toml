@@ -1,18 +1,17 @@
-# We need Node.js and Playwright dependencies
 providers = ["node"]
 
 [phases.setup]
-nixPkgs = ["nodejs_20", "chromium"]
+nixPkgs = ["nodejs_20", "chromium", "nss", "atk", "cups", "libdrm", "dbus", "libxkbcommon", "mesa", "libGL"]
 
 [phases.install]
 cmds = ["npm install"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["npm run build", "npx playwright install chromium"]
 
 [start]
 cmd = "npm run start:prod"
 
 [variables]
-PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
+PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "0"
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "/usr/bin/chromium"

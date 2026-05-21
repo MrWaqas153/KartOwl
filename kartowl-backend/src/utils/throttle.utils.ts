@@ -6,9 +6,12 @@
  * Returns a promise that resolves after a random delay within the specified range
  * Used to add unpredictable timing between scraper requests
  */
-export function randomDelay(minMs: number = 1000, maxMs: number = 3000): Promise<void> {
-    const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-    return new Promise(resolve => setTimeout(resolve, delay));
+export function randomDelay(
+  minMs: number = 1000,
+  maxMs: number = 3000,
+): Promise<void> {
+  const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+  return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 /**
@@ -16,10 +19,15 @@ export function randomDelay(minMs: number = 1000, maxMs: number = 3000): Promise
  * @param baseMs - Base delay in milliseconds
  * @param jitterPercent - Percentage of base to use as jitter range (default 30%)
  */
-export function delayWithJitter(baseMs: number, jitterPercent: number = 30): Promise<void> {
-    const jitter = baseMs * (jitterPercent / 100);
-    const actualDelay = baseMs + (Math.random() * jitter * 2 - jitter);
-    return new Promise(resolve => setTimeout(resolve, Math.max(0, actualDelay)));
+export function delayWithJitter(
+  baseMs: number,
+  jitterPercent: number = 30,
+): Promise<void> {
+  const jitter = baseMs * (jitterPercent / 100);
+  const actualDelay = baseMs + (Math.random() * jitter * 2 - jitter);
+  return new Promise((resolve) =>
+    setTimeout(resolve, Math.max(0, actualDelay)),
+  );
 }
 
 /**
@@ -29,24 +37,24 @@ export function delayWithJitter(baseMs: number, jitterPercent: number = 30): Pro
  * @param delayMs - Delay between retries in ms (default 2000)
  */
 export async function withRetry<T>(
-    fn: () => Promise<T>,
-    retries: number = 2,
-    delayMs: number = 2000
+  fn: () => Promise<T>,
+  retries: number = 2,
+  delayMs: number = 2000,
 ): Promise<T> {
-    let lastError: Error | null = null;
+  let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-            return await fn();
-        } catch (error) {
-            lastError = error as Error;
-            console.warn(`Attempt ${attempt + 1} failed:`, error);
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`Attempt ${attempt + 1} failed:`, error);
 
-            if (attempt < retries) {
-                await delayWithJitter(delayMs);
-            }
-        }
+      if (attempt < retries) {
+        await delayWithJitter(delayMs);
+      }
     }
+  }
 
-    throw lastError;
+  throw lastError;
 }

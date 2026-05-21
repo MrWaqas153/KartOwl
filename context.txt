@@ -1,4 +1,4 @@
-# KartOwl Project Context Document
+﻿# KartOwl Project Context Document
 
 ## Project Overview
 KartOwl is a Pakistani e-commerce comparison shopping platform that aggregates products from various marketplaces including Daraz, PriceOye, and Telemart. The application allows users to search for products across multiple platforms simultaneously, compare prices, and find the best deals.
