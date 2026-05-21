@@ -12,7 +12,7 @@ COPY . .
 
 RUN npm run build
 
-RUN find /ms-playwright -name "chrome" -o -name "chromium" 2>/dev/null | head -5
+RUN find /ms-playwright -type f -name "chrome*" | head -10 && ls /ms-playwright/
 
 RUN npm prune --production
 
