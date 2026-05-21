@@ -15,16 +15,16 @@ export class AlertsService {
     private readonly alertRepository: Repository<PriceAlert>,
   ) {
     this.transporter = nodemailer.createTransport({
-      // Nayi Cloud-Friendly Setting 👇
       host: 'smtp.gmail.com',
-      port: 465,
-      secure: true, // Port 465 ke liye lazmi hai
+      port: 587,
+      secure: false, // 587 ke liye isay false rakhna lazmi hai
+      requireTLS: true, // TLS encryption lazmi force karega
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
       },
       tls: {
-        rejectUnauthorized: false, // Railway timeout se bachane ke liye
+        rejectUnauthorized: false, // Cloud server strictness ko bypass karne ke liye
       },
     });
   }
