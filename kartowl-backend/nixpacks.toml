@@ -10,7 +10,7 @@ cmds = ["npm install", "npx playwright install chromium --with-deps"]
 cmds = ["npm run build"]
 
 [start]
-cmd = "npm run start:prod"
+cmd = "which chromium || which chromium-browser || find / -name 'chromium' 2>/dev/null | head -5 && npm run start:prod"
 
 [variables]
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "0"
