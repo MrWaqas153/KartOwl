@@ -16,7 +16,7 @@ export default function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="space-y-3">
             <img
-              src="/src/assets/kartowl-logo.png"
+              src="/kartowl-logo.png"
               alt="KartOwl Logo"
               className="h-10 w-auto"
             />
