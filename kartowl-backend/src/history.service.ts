@@ -19,7 +19,7 @@ export class HistoryService {
   constructor(
     @InjectRepository(ProductHistory)
     private historyRepository: Repository<ProductHistory>,
-  ) {}
+  ) { }
 
   async addPricePoint(params: AddPricePointParams) {
     const cleanUrl = normalizeUrl(params.url);
@@ -34,12 +34,15 @@ export class HistoryService {
     if (existingToday) return;
 
     // Create new history entry with explicit typing
+    // Naya Code (Math.round ke sath)
     const entryData: Partial<ProductHistory> = {
       productUrl: cleanUrl,
       productTitle: params.title,
-      price: params.price,
+      // 👇 Sirf in do lines mein jadoo kiya hai taake point wale numbers hat jayen
+      price: Math.round(Number(params.price)),
       marketplace: params.marketplace,
-      originalPrice: params.originalPrice ?? undefined,
+      originalPrice: params.originalPrice ? Math.round(Number(params.originalPrice)) : undefined,
+      // 👆 =========================================================================
       discount: params.discount ?? 0,
       imageUrl: params.imageUrl ?? undefined,
     };
