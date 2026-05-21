@@ -8,14 +8,15 @@ COPY package*.json ./
 
 RUN npm ci
 
-# ✨ YE LINE ADD KAREIN: Yeh package.json ke exact version wala browser laayegi
 RUN npx playwright install chromium --with-deps
+
+# ✨ YAHAN MAGIC HAI: Playwright 1.57 ke naye folder ka shortcut (symlink) bana rahe hain
+RUN ln -s /ms-playwright/chromium-1200/chrome-linux64 /ms-playwright/chromium-1200/chrome-linux
 
 COPY . .
 
 RUN npm run build
 
-# Space bachane ke liye (optional step jo aapne likha tha)
 RUN find /ms-playwright -type f -name "chrome*" | head -10 && ls /ms-playwright/
 
 RUN npm prune --production
