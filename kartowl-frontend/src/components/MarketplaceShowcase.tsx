@@ -14,25 +14,25 @@ const marketplaces: Marketplace[] = [
     name: 'Daraz',
     description: 'Pakistan\'s largest online marketplace',
     color: 'from-black-500 to-black-600',
-    image: '/src/assets/daraz-logo.png'
+    image: '/daraz-logo.png'
   },
   {
     name: 'OLX',
     description: 'Local classified ads and marketplace',
     color: 'from-black-500 to-black-600',
-    image: '/src/assets/olx-logo.png'
+    image: '/olx-logo.png'
   },
   {
     name: 'Telemart',
     description: 'Electronics and gadgets specialist',
     color: 'from-black-500 to-black-600',
-    image: '/src/assets/telemart-logo.png'
+    image: '/telemart-logo.png'
   },
   {
     name: 'PriceoYe',
     description: 'Best prices on tech products',
     color: 'from-black-500 to-black-600',
-    image: '/src/assets/priceoye-logo.png'
+    image: '/priceoye-logo.png'
   }
 ];
 

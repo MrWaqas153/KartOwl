@@ -41,7 +41,7 @@ export default function Navbar({ searchQuery = '', onSearchChange, onSearch, isL
             data-testid="link-home"
           >
             <img
-              src="/src/assets/kartowl-logo.png"
+              src="/kartowl-logo.png"
               alt="KartOwl Logo"
               className="h-10 w-auto"
             />
