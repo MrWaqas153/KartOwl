@@ -21,12 +21,13 @@ export default function PriceAlertDialog({ productUrl, currentPrice }: { product
 
     // 2. Send to Backend
     try {
-      const res = await fetch('http://localhost:3000/api/alerts', {
+      // YAHAN RAILWAY KA LIVE LINK UPDATE KAR DIYA HAI 👇
+      const res = await fetch('https://kartowl-production-8370.up.railway.app/api/alerts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, productUrl, targetPrice: Number(targetPrice) })
       });
-      
+
       if (!res.ok) throw new Error();
       toast({ title: "Success!", description: "Check your inbox for confirmation." });
       setOpen(false);
