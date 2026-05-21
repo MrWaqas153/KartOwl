@@ -21,16 +21,12 @@ export class BrowserService implements OnModuleInit, OnModuleDestroy {
       this.logger.log('🕵️ Launching Stealth Singleton Browser...');
       this.browser = await chromium.launch({
         headless: true,
+        executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-blink-features=AutomationControlled',
-          '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process',
-          '--flag-switches-begin',
-          '--disable-site-isolation-trials',
-          '--flag-switches-end',
-        ],
+        ]
       });
       this.browserAvailable = true;
       this.logger.log('✅ Browser launched successfully');
