@@ -14,4 +14,3 @@ cmd = "npm run start:prod"
 
 [variables]
 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "0"
-PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = "/usr/bin/chromium"
