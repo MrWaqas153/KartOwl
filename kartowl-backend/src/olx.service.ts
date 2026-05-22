@@ -22,10 +22,21 @@ export class OlxService {
         return apiResult.products;
       }
 
-      this.logger.warn('OLX direct API appears blocked. Trying Apify fallback.');
+      this.logger.warn('OLX direct API appears blocked. Trying Jina Reader fallback.');
+      const readerProducts = await this.searchWithJinaReader(query);
+      if (readerProducts.length > 0) {
+        return readerProducts;
+      }
+
       const browserProducts = await this.searchWithBrowser(query);
       if (browserProducts.length > 0) {
         return browserProducts;
+      }
+
+      if (process.env.OLX_USE_APIFY_FALLBACK !== 'true') {
+        throw new Error(
+          'OLX fallback returned 0 products. Apify fallback is disabled.',
+        );
       }
 
       return this.searchWithApify(query);
@@ -104,6 +115,98 @@ export class OlxService {
     const products = this.normalizeProducts(items);
     this.logger.log(`OLX Apify fallback: found ${products.length} products`);
     return products;
+  }
+
+  private async searchWithJinaReader(query: string): Promise<any[]> {
+    const searchUrl = `${this.BASE_URL}/items/q-${encodeURIComponent(query)}`;
+    const readerUrl = `https://r.jina.ai/${searchUrl}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.SEARCH_TIMEOUT_MS);
+
+    try {
+      this.logger.log('OLX Jina Reader fallback: fetching search markdown.');
+      const response = await fetch(readerUrl, {
+        signal: controller.signal,
+        headers: {
+          Accept: 'text/plain, text/markdown, */*',
+          'User-Agent': 'KartOwl/1.0',
+        },
+      });
+
+      if (!response.ok) {
+        this.logger.warn(`OLX Jina Reader failed with status ${response.status}.`);
+        return [];
+      }
+
+      const markdown = await response.text();
+      const products = this.parseJinaMarkdown(markdown);
+
+      if (products.length === 0) {
+        this.logger.warn('OLX Jina Reader fallback returned 0 products.');
+      } else {
+        this.logger.log(`OLX Jina Reader fallback: found ${products.length} products`);
+      }
+
+      return products;
+    } catch (error: any) {
+      const message =
+        error?.name === 'AbortError'
+          ? `request timed out after ${this.SEARCH_TIMEOUT_MS}ms`
+          : error?.message;
+      this.logger.warn(`OLX Jina Reader fallback failed: ${message}`);
+      return [];
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private parseJinaMarkdown(markdown: string): any[] {
+    const listingRegex =
+      /\*[\s\S]*?\]\((https:\/\/www\.olx\.com\.pk\/item\/[^)\s]+)[^)]*\)[\s\S]*?!\[[^\]]*\]\((https:\/\/images\.olx\.com\.pk\/[^)]+)\)[\s\S]*?(Rs\.?\s?[\d,.]+(?:\s?(?:Lac|Lakh|Crore))?)[\s\S]*?##\s+([^\n]+)\n+([\s\S]*?)(?=\n\*\s+\[\]|\nView All|\nBack to top|$)/gi;
+
+    const products: any[] = [];
+    const seen = new Set<string>();
+    let match: RegExpExecArray | null;
+
+    while ((match = listingRegex.exec(markdown)) && products.length < 15) {
+      const [, productUrl, image, priceText, title, meta] = match;
+      if (seen.has(productUrl)) continue;
+      seen.add(productUrl);
+
+      const location = this.parseLocationFromMeta(meta);
+      const currentPrice = this.parsePrice({ price: priceText });
+
+      if (!title || currentPrice <= 0) continue;
+
+      products.push({
+        id:
+          productUrl.match(/iid-(\d+)/)?.[1] ||
+          Math.random().toString(36).substring(2, 11),
+        title: title.trim(),
+        currentPrice,
+        originalPrice: currentPrice,
+        discount: 0,
+        image,
+        marketplace: 'olx',
+        productUrl,
+        rating: 0,
+        reviews: 0,
+        inStock: true,
+        location,
+        priceText,
+      });
+    }
+
+    return products;
+  }
+
+  private parseLocationFromMeta(meta: string): string {
+    const line = meta
+      .split('\n')
+      .map((value) => value.trim())
+      .find((value) => value.includes('•'));
+
+    return line?.split('•')[0]?.trim() || 'Pakistan';
   }
 
   private async searchWithBrowser(query: string): Promise<any[]> {
