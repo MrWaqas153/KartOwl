@@ -28,8 +28,17 @@ export default function PriceAlertDialog({ productUrl, currentPrice }: { product
         body: JSON.stringify({ email, productUrl, targetPrice: Number(targetPrice) })
       });
 
-      if (!res.ok) throw new Error();
-      toast({ title: "Success!", description: "Check your inbox for confirmation." });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data?.message || 'Failed to set alert');
+
+      if (data.emailSent) {
+        toast({ title: "Alert set!", description: "Check your inbox for confirmation." });
+      } else {
+        toast({
+          title: "Alert saved",
+          description: "Email confirmation could not be sent, but your price alert is active.",
+        });
+      }
       setOpen(false);
     } catch (e) {
       toast({ title: "Error", description: "Failed to set alert", variant: "destructive" });

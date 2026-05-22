@@ -8,7 +8,6 @@ import * as nodemailer from 'nodemailer';
 @Injectable()
 export class AlertsService {
   private readonly logger = new Logger(AlertsService.name);
-  private readonly transporter;
   private readonly emailEnabled = Boolean(
     process.env.EMAIL_USER && process.env.EMAIL_PASS,
   );
@@ -16,23 +15,92 @@ export class AlertsService {
   constructor(
     @InjectRepository(PriceAlert)
     private readonly alertRepository: Repository<PriceAlert>,
-  ) {
-    this.transporter = nodemailer.createTransport({
+  ) {}
+
+  private getMailTransports() {
+    const baseAuth = {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    };
+
+    const commonOptions = {
+      auth: baseAuth,
+      connectionTimeout: 30000,
+      greetingTimeout: 30000,
+      socketTimeout: 45000,
+      family: 4,
+      tls: {
+        rejectUnauthorized: false,
+      },
+    };
+
+    const configuredTransport = {
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: Number(process.env.SMTP_PORT || 587),
       secure: process.env.SMTP_SECURE === 'true',
       requireTLS: process.env.SMTP_REQUIRE_TLS !== 'false',
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-    });
+      ...commonOptions,
+    };
+
+    const gmailSecureTransport = {
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      requireTLS: false,
+      ...commonOptions,
+    };
+
+    const gmailTlsTransport = {
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      ...commonOptions,
+    };
+
+    const transports = [
+      configuredTransport,
+      gmailSecureTransport,
+      gmailTlsTransport,
+    ];
+
+    return transports.filter(
+      (transport, index, allTransports) =>
+        allTransports.findIndex(
+          (candidate) =>
+            candidate.host === transport.host &&
+            candidate.port === transport.port &&
+            candidate.secure === transport.secure,
+        ) === index,
+    );
+  }
+
+  private async sendMail(mailOptions: nodemailer.SendMailOptions) {
+    if (!this.emailEnabled) {
+      throw new Error('EMAIL_USER or EMAIL_PASS is not configured');
+    }
+
+    const errors: string[] = [];
+
+    for (const transportOptions of this.getMailTransports()) {
+      try {
+        this.logger.log(
+          `Sending email via ${transportOptions.host}:${transportOptions.port}`,
+        );
+        const transporter = nodemailer.createTransport(transportOptions);
+        return await transporter.sendMail(mailOptions);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(
+          `${transportOptions.host}:${transportOptions.port} - ${message}`,
+        );
+        this.logger.warn(
+          `Email transport failed (${transportOptions.host}:${transportOptions.port}): ${message}`,
+        );
+      }
+    }
+
+    throw new Error(`All email transports failed: ${errors.join(' | ')}`);
   }
 
   @Cron('0 */6 * * *')
@@ -146,7 +214,7 @@ export class AlertsService {
       throw new Error('EMAIL_USER or EMAIL_PASS is not configured');
     }
 
-    await this.transporter.sendMail({
+    await this.sendMail({
       from: `"KartOwl" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
       to: email,
       subject: 'Price Alert Set Successfully!',
@@ -179,7 +247,7 @@ export class AlertsService {
       throw new Error('EMAIL_USER or EMAIL_PASS is not configured');
     }
 
-    await this.transporter.sendMail({
+    await this.sendMail({
       from: `"KartOwl" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
       to: alert.email,
       subject: 'Price Drop Alert! Your target price has been reached!',
