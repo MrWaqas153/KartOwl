@@ -5,114 +5,79 @@ import { BrowserService } from './browser.service';
 export class OlxService {
   private readonly logger = new Logger(OlxService.name);
 
+  // Constructor mein BrowserService rakha hai taake NestJS ka structure break na ho, 
+  // lekin hum isay use nahi karenge kyunke ab hum API use kar rahe hain.
   constructor(private readonly browserService: BrowserService) { }
 
   async searchProduct(query: string): Promise<any[]> {
-    if (!this.browserService.isBrowserAvailable()) {
-      this.logger.warn('Browser not available for OLX scraping');
-      return [];
-    }
-
-    const result = await this.browserService.getNewPage();
-    if (!result) return [];
-
-    const { page, context } = result;
-
     try {
-      this.logger.log(`🦉 OLX scraping: ${query}`);
+      this.logger.log(`🦉 OLX API searching for: ${query}`);
 
-      // 1. Anti-Bot Bypass: OLX ko lagay ke real user aa raha hai
-      await page.setExtraHTTPHeaders({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      // 1. OLX ki internal Hidden JSON API ka URL
+      const apiUrl = `https://www.olx.com.pk/api/relevance/v4/search?query=${encodeURIComponent(query)}&lang=en`;
+
+      // 2. Fetch lagayen with Anti-Bot Headers (Cloudflare bypass)
+      const response = await fetch(apiUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+          'Referer': 'https://www.olx.com.pk/',
+          'Accept-Language': 'en-US,en;q=0.9'
+        }
       });
 
-      const searchUrl = `https://www.olx.com.pk/items/q-${encodeURIComponent(query)}`;
-      await page.goto(searchUrl, {
-        waitUntil: 'domcontentloaded',
-        timeout: 30000,
-      });
-
-      try {
-        // 2. Extra Selectors: Agar OLX class change kare toh code fail na ho
-        await page.waitForSelector('li[aria-label="Listing"], [data-aut-id="itemBox"], li article', {
-          timeout: 10000,
-        });
-      } catch {
-        // 3. Debugging: Agar block hua toh Railway logs mein exact page title show hoga
-        const pageTitle = await page.title();
-        this.logger.warn(`OLX: No listings found. Page Title seen by Railway: "${pageTitle}"`);
+      if (!response.ok) {
+        this.logger.warn(`OLX API failed with status: ${response.status}`);
         return [];
       }
 
-      const products = await page.evaluate(() => {
-        const items: any[] = [];
-        const cards = document.querySelectorAll(
-          'li[aria-label="Listing"], [data-aut-id="itemBox"], li article',
-        );
+      const jsonData = await response.json();
 
-        cards.forEach((card: any) => {
-          const anchor = card.querySelector('a');
-          if (!anchor) return;
+      // 3. Agar products na milein ya API block ho
+      if (!jsonData.data || jsonData.data.length === 0) {
+        this.logger.warn('OLX API: No listings found.');
+        return [];
+      }
 
-          let productUrl = anchor.getAttribute('href');
-          if (productUrl && !productUrl.startsWith('http')) {
-            productUrl = 'https://www.olx.com.pk' + productUrl;
-          }
+      // 4. JSON data ko KartOwl ke hisaab se format karein
+      const products = jsonData.data.map((item: any) => {
+        // Exact integer price nikal rahay hain, decimal ka koi chakkar nahi
+        const currentPrice = item.price?.value?.raw || 0;
+        const title = item.title || 'Unknown';
+        const productUrl = `https://www.olx.com.pk/item/iid-${item.id}`;
+        const image = item.images && item.images.length > 0 ? item.images[0].url : '';
+        
+        // Location set karna
+        let location = 'Pakistan';
+        if (item.locations && item.locations.length > 0) {
+          location = item.locations[0].name || 'Pakistan';
+        }
 
-          let title =
-            card.querySelector('[aria-label="Title"]')?.textContent ||
-            card.querySelector('h2')?.textContent ||
-            'Unknown';
-          title = title.trim();
-
-          const textContent = card.innerText || '';
-          let currentPrice = 0;
-          const priceMatch = textContent.match(/Rs\.?\s*[\d,.]+\s*(?:Lac)?/i);
-          if (priceMatch) {
-            const numStr =
-              priceMatch[0].replace(/,/g, '').match(/[\d.]+/)?.[0] || '0';
-            currentPrice = priceMatch[0].toLowerCase().includes('lac')
-              ? parseFloat(numStr) * 100000
-              : parseInt(numStr);
-          }
-
-          const imgEl = card.querySelector('img');
-          const image =
-            imgEl?.getAttribute('src') || imgEl?.getAttribute('data-src') || '';
-
-          let location = 'Pakistan';
-          const locationEl = card.querySelector('[aria-label="Location"]');
-          if (locationEl) location = locationEl.textContent?.trim() || location;
-
-          if (title && currentPrice > 0) {
-            items.push({
-              id: Math.random().toString(36).substring(2, 11),
-              title,
-              currentPrice,
-              originalPrice: currentPrice,
-              discount: 0,
-              image,
-              marketplace: 'olx',
-              productUrl,
-              rating: 0,
-              reviews: 0,
-              inStock: true,
-              location,
-            });
-          }
-        });
-
-        return items.slice(0, 15);
+        return {
+          id: item.id?.toString() || Math.random().toString(36).substring(2, 11),
+          title: title.trim(),
+          currentPrice,
+          originalPrice: currentPrice,
+          discount: 0,
+          image,
+          marketplace: 'olx',
+          productUrl,
+          rating: 0,
+          reviews: 0,
+          inStock: true,
+          location,
+        };
       });
 
-      return products;
-    } catch (error) {
-      this.logger.error(`❌ OLX scraping failed: ${error}`);
+      // 5. Sirf wo products return karein jinki price > 0 ho aur top 15 results limit karein
+      const finalProducts = products.filter((p: any) => p.currentPrice > 0).slice(0, 15);
+      
+      this.logger.log(`✅ OLX API: Found ${finalProducts.length} products`);
+      return finalProducts;
+
+    } catch (error: any) {
+      this.logger.error(`❌ OLX API scraping failed: ${error.message}`);
       return [];
-    } finally {
-      await context.close();
     }
   }
 }
