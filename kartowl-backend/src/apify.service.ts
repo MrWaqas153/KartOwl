@@ -10,7 +10,7 @@ export class ApifyService {
     daraz: 'Bfrh69aUuORkrGQ0T',
     priceoye: '3zm6qi2doRm6FQ0Xp',
     telemart: 'F311dJbC4FnAWcXip',
-    olx: '7Nxt7zbKMFu9CqNbP',
+    olx: process.env.APIFY_OLX_ACTOR_ID || '7Nxt7zbKMFu9CqNbP',
   };
 
   constructor() {
@@ -26,9 +26,10 @@ export class ApifyService {
         `Starting Apify Actor: ${marketplace} | query: ${query}`,
       );
 
+      const actorInput = this.getActorInput(marketplace, query);
       const run = await this.client
         .actor(this.ACTOR_IDS[marketplace])
-        .call(this.getActorInput(marketplace, query), { waitSecs: 90 });
+        .call(actorInput, { waitSecs: 90 });
 
       const { items } = await this.client
         .dataset(run.defaultDatasetId)
@@ -53,18 +54,38 @@ export class ApifyService {
     marketplace: keyof ApifyService['ACTOR_IDS'],
     query: string,
   ) {
+    const searchUrl = `https://www.olx.com.pk/items/q-${encodeURIComponent(query)}`;
     const baseInput = { query };
 
     if (marketplace !== 'olx') {
       return baseInput;
     }
 
+    const proxyGroups = (
+      process.env.APIFY_OLX_PROXY_GROUPS || 'RESIDENTIAL'
+    )
+      .split(',')
+      .map((group) => group.trim())
+      .filter(Boolean);
+
+    const proxyConfiguration = {
+      useApifyProxy: true,
+      apifyProxyGroups: proxyGroups,
+    };
+
     return {
       ...baseInput,
-      proxyConfiguration: {
-        useApifyProxy: true,
-        apifyProxyGroups: ['RESIDENTIAL'],
-      },
+      maxItems: 15,
+      maxResults: 15,
+      maxRequestsPerCrawl: 1,
+      proxy: proxyConfiguration,
+      proxyConfig: proxyConfiguration,
+      proxyConfiguration,
+      startUrl: searchUrl,
+      startUrls: [{ url: searchUrl }],
+      url: searchUrl,
+      urls: [searchUrl],
+      useApifyProxy: true,
     };
   }
 }
