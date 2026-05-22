@@ -173,13 +173,17 @@ export class AppController {
   async createAlert(@Body() body: any) {
     console.log('🔔 New Alert Requested:', body);
 
-    await this.alertsService.sendConfirmation(
+    const result = await this.alertsService.createAlert(
       body.email,
       body.productUrl,
       body.targetPrice,
       body.productTitle || 'Product',
     );
 
-    return { success: true };
+    return {
+      success: true,
+      emailSent: result.emailSent,
+      emailError: result.emailError,
+    };
   }
 }
