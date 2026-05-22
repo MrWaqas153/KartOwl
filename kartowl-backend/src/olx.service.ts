@@ -1,61 +1,119 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BrowserService } from './browser.service';
+import { ApifyService } from './apify.service';
 
 @Injectable()
 export class OlxService {
   private readonly logger = new Logger(OlxService.name);
+  private readonly BASE_URL = 'https://www.olx.com.pk';
+  private readonly SEARCH_TIMEOUT_MS = 15000;
 
-  // Constructor mein BrowserService rakha hai taake NestJS ka structure break na ho, 
-  // lekin hum isay use nahi karenge kyunke ab hum API use kar rahe hain.
-  constructor(private readonly browserService: BrowserService) { }
+  constructor(private readonly apifyService: ApifyService) {}
 
   async searchProduct(query: string): Promise<any[]> {
     try {
-      this.logger.log(`🦉 OLX API searching for: ${query}`);
+      this.logger.log(`OLX searching for: ${query}`);
 
-      // 1. OLX ki internal Hidden JSON API ka URL
-      const apiUrl = `https://www.olx.com.pk/api/relevance/v4/search?query=${encodeURIComponent(query)}&lang=en`;
+      const apiResult = await this.searchWithOlxApi(query);
+      if (apiResult.products.length > 0 || !apiResult.blocked) {
+        return apiResult.products;
+      }
 
-      // 2. Fetch lagayen with Anti-Bot Headers (Cloudflare bypass)
+      this.logger.warn('OLX direct API appears blocked. Trying Apify fallback.');
+      return this.searchWithApify(query);
+    } catch (error: any) {
+      this.logger.error(`OLX search failed: ${error.message}`);
+      return [];
+    }
+  }
+
+  private async searchWithOlxApi(
+    query: string,
+  ): Promise<{ products: any[]; blocked: boolean }> {
+    const apiUrl = `${this.BASE_URL}/api/relevance/v4/search?query=${encodeURIComponent(query)}&lang=en`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.SEARCH_TIMEOUT_MS);
+
+    try {
       const response = await fetch(apiUrl, {
+        signal: controller.signal,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-          'Referer': 'https://www.olx.com.pk/',
-          'Accept-Language': 'en-US,en;q=0.9'
-        }
+          Accept: 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          Referer: `${this.BASE_URL}/`,
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-origin',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
       });
 
-      if (!response.ok) {
-        this.logger.warn(`OLX API failed with status: ${response.status}`);
-        return [];
+      const contentType = response.headers.get('content-type') ?? '';
+      const blocked =
+        [403, 429, 503].includes(response.status) ||
+        !contentType.includes('application/json');
+
+      if (!response.ok || blocked) {
+        this.logger.warn(
+          `OLX API unavailable: status=${response.status}, content-type=${contentType || 'unknown'}`,
+        );
+        return { products: [], blocked: true };
       }
 
       const jsonData = await response.json();
+      const listings = Array.isArray(jsonData?.data) ? jsonData.data : [];
 
-      // 3. Agar products na milein ya API block ho
-      if (!jsonData.data || jsonData.data.length === 0) {
-        this.logger.warn('OLX API: No listings found.');
-        return [];
+      if (listings.length === 0) {
+        this.logger.warn(`OLX API: no listings found for "${query}".`);
+        return { products: [], blocked: false };
       }
 
-      // 4. JSON data ko KartOwl ke hisaab se format karein
-      const products = jsonData.data.map((item: any) => {
-        // Exact integer price nikal rahay hain, decimal ka koi chakkar nahi
-        const currentPrice = item.price?.value?.raw || 0;
-        const title = item.title || 'Unknown';
-        const productUrl = `https://www.olx.com.pk/item/iid-${item.id}`;
-        const image = item.images && item.images.length > 0 ? item.images[0].url : '';
-        
-        // Location set karna
-        let location = 'Pakistan';
-        if (item.locations && item.locations.length > 0) {
-          location = item.locations[0].name || 'Pakistan';
-        }
+      const products = this.normalizeProducts(listings);
+      this.logger.log(`OLX API: found ${products.length} products`);
+      return { products, blocked: false };
+    } catch (error: any) {
+      const message =
+        error?.name === 'AbortError'
+          ? `request timed out after ${this.SEARCH_TIMEOUT_MS}ms`
+          : error?.message;
+
+      this.logger.warn(`OLX API request failed: ${message}`);
+      return { products: [], blocked: true };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async searchWithApify(query: string): Promise<any[]> {
+    if (!process.env.APIFY_API_TOKEN) {
+      this.logger.warn(
+        'APIFY_API_TOKEN is not set, so OLX fallback cannot run on Railway.',
+      );
+      return [];
+    }
+
+    const items = await this.apifyService.runScraper('olx', query);
+    const products = this.normalizeProducts(items);
+    this.logger.log(`OLX Apify fallback: found ${products.length} products`);
+    return products;
+  }
+
+  private normalizeProducts(items: any[]): any[] {
+    return items
+      .map((item: any) => {
+        const currentPrice = this.parsePrice(item);
+        const title = (item.title || item.name || 'Unknown').trim();
+        const productUrl = this.resolveProductUrl(item);
+        const image = this.resolveImage(item);
+        const location = this.resolveLocation(item);
 
         return {
-          id: item.id?.toString() || Math.random().toString(36).substring(2, 11),
-          title: title.trim(),
+          id:
+            item.id?.toString() ||
+            item.itemId?.toString() ||
+            productUrl ||
+            Math.random().toString(36).substring(2, 11),
+          title,
           currentPrice,
           originalPrice: currentPrice,
           discount: 0,
@@ -66,18 +124,96 @@ export class OlxService {
           reviews: 0,
           inStock: true,
           location,
+          priceText:
+            item.price?.displayValue ||
+            item.priceText ||
+            (typeof item.price === 'string' ? item.price : undefined),
         };
-      });
+      })
+      .filter((product: any) => product.currentPrice > 0 && product.title)
+      .slice(0, 15);
+  }
 
-      // 5. Sirf wo products return karein jinki price > 0 ho aur top 15 results limit karein
-      const finalProducts = products.filter((p: any) => p.currentPrice > 0).slice(0, 15);
-      
-      this.logger.log(`✅ OLX API: Found ${finalProducts.length} products`);
-      return finalProducts;
+  private parsePrice(item: any): number {
+    const rawPrice =
+      item.price?.value?.raw ??
+      item.currentPrice ??
+      item.priceValue ??
+      item.price?.raw ??
+      item.price;
 
-    } catch (error: any) {
-      this.logger.error(`❌ OLX API scraping failed: ${error.message}`);
-      return [];
+    if (typeof rawPrice === 'number') {
+      return rawPrice;
     }
+
+    if (typeof rawPrice !== 'string') {
+      return 0;
+    }
+
+    const normalized = rawPrice.toLowerCase().replace(/,/g, '');
+    const numericValue = Number(normalized.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(numericValue)) {
+      return 0;
+    }
+
+    if (normalized.includes('crore')) {
+      return Math.round(numericValue * 10000000);
+    }
+
+    if (normalized.includes('lac') || normalized.includes('lakh')) {
+      return Math.round(numericValue * 100000);
+    }
+
+    return Math.round(numericValue);
+  }
+
+  private resolveProductUrl(item: any): string {
+    const url = item.url || item.productUrl || item.link;
+    if (typeof url === 'string' && url.startsWith('http')) {
+      return url;
+    }
+
+    if (typeof url === 'string' && url.startsWith('/')) {
+      return `${this.BASE_URL}${url}`;
+    }
+
+    if (item.slug && item.id) {
+      return `${this.BASE_URL}/item/${item.slug}-iid-${item.id}`;
+    }
+
+    if (item.id) {
+      return `${this.BASE_URL}/item/iid-${item.id}`;
+    }
+
+    return this.BASE_URL;
+  }
+
+  private resolveImage(item: any): string {
+    if (typeof item.image === 'string') {
+      return item.image;
+    }
+
+    if (typeof item.imageUrl === 'string') {
+      return item.imageUrl;
+    }
+
+    if (Array.isArray(item.images) && item.images.length > 0) {
+      const firstImage = item.images[0];
+      return typeof firstImage === 'string' ? firstImage : firstImage?.url || '';
+    }
+
+    return '';
+  }
+
+  private resolveLocation(item: any): string {
+    if (typeof item.location === 'string') {
+      return item.location;
+    }
+
+    if (Array.isArray(item.locations) && item.locations.length > 0) {
+      return item.locations[0]?.name || 'Pakistan';
+    }
+
+    return item.city || 'Pakistan';
   }
 }

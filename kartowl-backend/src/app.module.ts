@@ -6,6 +6,7 @@ import { DarazService } from './daraz.service';
 import { PriceOyeService } from './priceoye.service';
 import { TelemartService } from './telemart.service';
 import { OlxService } from './olx.service';
+import { ApifyService } from './apify.service';
 import { HistoryService } from './history.service';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -69,6 +70,7 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
     PriceOyeService,
     TelemartService,
     OlxService,
+    ApifyService,
     HistoryService,
     {
       provide: APP_GUARD,
