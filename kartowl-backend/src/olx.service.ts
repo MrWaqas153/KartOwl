@@ -22,7 +22,7 @@ export class OlxService {
       return this.searchWithApify(query);
     } catch (error: any) {
       this.logger.error(`OLX search failed: ${error.message}`);
-      return [];
+      throw error;
     }
   }
 
@@ -86,10 +86,9 @@ export class OlxService {
 
   private async searchWithApify(query: string): Promise<any[]> {
     if (!process.env.APIFY_API_TOKEN) {
-      this.logger.warn(
-        'APIFY_API_TOKEN is not set, so OLX fallback cannot run on Railway.',
+      throw new Error(
+        'OLX is unavailable because APIFY_API_TOKEN is not set on Railway.',
       );
-      return [];
     }
 
     const items = await this.apifyService.runScraper('olx', query);

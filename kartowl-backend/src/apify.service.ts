@@ -18,26 +18,53 @@ export class ApifyService {
   }
 
   async runScraper(
-    marketplace: keyof typeof this.ACTOR_IDS,
+    marketplace: keyof ApifyService['ACTOR_IDS'],
     query: string,
   ): Promise<any[]> {
     try {
       this.logger.log(
-        `🚀 Starting Apify Actor: ${marketplace} | query: ${query}`,
+        `Starting Apify Actor: ${marketplace} | query: ${query}`,
       );
 
       const run = await this.client
         .actor(this.ACTOR_IDS[marketplace])
-        .call({ query }, { waitSecs: 60 });
+        .call(this.getActorInput(marketplace, query), { waitSecs: 90 });
 
       const { items } = await this.client
         .dataset(run.defaultDatasetId)
         .listItems();
-      this.logger.log(`✅ ${marketplace}: ${items.length} results`);
+
+      if (marketplace === 'olx' && items.length === 0) {
+        throw new Error(
+          'OLX Apify actor returned 0 results. OLX is likely blocking the actor IP/proxy; enable Apify residential proxy for this actor.',
+        );
+      }
+
+      this.logger.log(`${marketplace}: ${items.length} results`);
       return items;
     } catch (error) {
-      this.logger.error(`❌ Apify Actor failed (${marketplace}): ${error}`);
-      return [];
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Apify Actor failed (${marketplace}): ${message}`);
+      throw new Error(message);
     }
+  }
+
+  private getActorInput(
+    marketplace: keyof ApifyService['ACTOR_IDS'],
+    query: string,
+  ) {
+    const baseInput = { query };
+
+    if (marketplace !== 'olx') {
+      return baseInput;
+    }
+
+    return {
+      ...baseInput,
+      proxyConfiguration: {
+        useApifyProxy: true,
+        apifyProxyGroups: ['RESIDENTIAL'],
+      },
+    };
   }
 }
