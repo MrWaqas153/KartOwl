@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ApifyService } from './apify.service';
+import { BrowserService } from './browser.service';
 
 @Injectable()
 export class OlxService {
@@ -7,7 +8,10 @@ export class OlxService {
   private readonly BASE_URL = 'https://www.olx.com.pk';
   private readonly SEARCH_TIMEOUT_MS = 15000;
 
-  constructor(private readonly apifyService: ApifyService) {}
+  constructor(
+    private readonly apifyService: ApifyService,
+    private readonly browserService: BrowserService,
+  ) {}
 
   async searchProduct(query: string): Promise<any[]> {
     try {
@@ -19,6 +23,11 @@ export class OlxService {
       }
 
       this.logger.warn('OLX direct API appears blocked. Trying Apify fallback.');
+      const browserProducts = await this.searchWithBrowser(query);
+      if (browserProducts.length > 0) {
+        return browserProducts;
+      }
+
       return this.searchWithApify(query);
     } catch (error: any) {
       this.logger.error(`OLX search failed: ${error.message}`);
@@ -95,6 +104,132 @@ export class OlxService {
     const products = this.normalizeProducts(items);
     this.logger.log(`OLX Apify fallback: found ${products.length} products`);
     return products;
+  }
+
+  private async searchWithBrowser(query: string): Promise<any[]> {
+    const proxy = this.getBrowserProxy(query);
+    if (!proxy) {
+      this.logger.warn(
+        'OLX browser fallback skipped because no browser proxy is configured.',
+      );
+      return [];
+    }
+
+    const pageSession = await this.browserService.getNewPage({ proxy });
+    if (!pageSession) {
+      this.logger.warn('OLX browser fallback skipped because browser is unavailable.');
+      return [];
+    }
+
+    const { page, context } = pageSession;
+    const searchUrl = `${this.BASE_URL}/items/q-${encodeURIComponent(query)}`;
+
+    try {
+      this.logger.log('OLX browser fallback: opening search page via proxy.');
+      await page.goto(searchUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: this.SEARCH_TIMEOUT_MS,
+      });
+
+      const status = page.url().includes('/cdn-cgi/') ? 'cloudflare' : 'loaded';
+      const products = await page.evaluate(() => {
+        const normalizeText = (value: string | null | undefined) =>
+          (value || '').replace(/\s+/g, ' ').trim();
+
+        const parsePrice = (value: string) => {
+          const normalized = value.toLowerCase().replace(/,/g, '');
+          const numericValue = Number(normalized.replace(/[^\d.]/g, ''));
+          if (!Number.isFinite(numericValue)) return 0;
+          if (normalized.includes('crore')) return Math.round(numericValue * 10000000);
+          if (normalized.includes('lac') || normalized.includes('lakh')) {
+            return Math.round(numericValue * 100000);
+          }
+          return Math.round(numericValue);
+        };
+
+        const anchors = Array.from(
+          document.querySelectorAll<HTMLAnchorElement>('a[href*="/item/"]'),
+        );
+
+        const seen = new Set<string>();
+        return anchors
+          .map((anchor) => {
+            const href = anchor.href;
+            if (!href || seen.has(href)) return null;
+            seen.add(href);
+
+            const card =
+              anchor.closest('li') ||
+              anchor.closest('article') ||
+              anchor.closest('div');
+            const text = normalizeText(card?.textContent || anchor.textContent);
+            const priceText = text.match(/Rs\.?\s?[\d,.]+(?:\s?(?:lac|lakh|crore))?/i)?.[0];
+            const title =
+              normalizeText(anchor.getAttribute('title')) ||
+              normalizeText(anchor.textContent)
+                .replace(priceText || '', '')
+                .slice(0, 120);
+            const image =
+              card?.querySelector<HTMLImageElement>('img')?.src ||
+              anchor.querySelector<HTMLImageElement>('img')?.src ||
+              '';
+
+            return {
+              title,
+              currentPrice: priceText ? parsePrice(priceText) : 0,
+              priceText,
+              productUrl: href,
+              image,
+              location: 'Pakistan',
+            };
+          })
+          .filter((item) => Boolean(item?.title && item.currentPrice > 0))
+          .slice(0, 15);
+      });
+
+      if (products.length === 0) {
+        this.logger.warn(`OLX browser fallback returned 0 products (${status}).`);
+      } else {
+        this.logger.log(`OLX browser fallback: found ${products.length} products`);
+      }
+
+      return this.normalizeProducts(products);
+    } catch (error: any) {
+      this.logger.warn(`OLX browser fallback failed: ${error.message}`);
+      return [];
+    } finally {
+      await context.close();
+    }
+  }
+
+  private getBrowserProxy(query: string) {
+    const customProxy = process.env.OLX_PROXY_SERVER;
+    if (customProxy) {
+      return {
+        server: customProxy,
+        username: process.env.OLX_PROXY_USERNAME,
+        password: process.env.OLX_PROXY_PASSWORD,
+      };
+    }
+
+    const apifyProxyPassword = process.env.APIFY_PROXY_PASSWORD;
+    if (!apifyProxyPassword) {
+      return null;
+    }
+
+    const groups = process.env.APIFY_OLX_PROXY_GROUPS || 'RESIDENTIAL';
+    const country = process.env.APIFY_OLX_PROXY_COUNTRY;
+    const session = `kartowl-${query.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 24) || 'olx'}`;
+    const usernameParts = [`groups-${groups}`, `session-${session}`];
+    if (country) {
+      usernameParts.splice(1, 0, `country-${country}`);
+    }
+
+    return {
+      server: 'http://proxy.apify.com:8000',
+      username: usernameParts.join(','),
+      password: apifyProxyPassword,
+    };
   }
 
   private normalizeProducts(items: any[]): any[] {

@@ -50,7 +50,13 @@ export class BrowserService implements OnModuleInit, OnModuleDestroy {
     return this.browserAvailable;
   }
 
-  async getNewPage() {
+  async getNewPage(options?: {
+    proxy?: {
+      server: string;
+      username?: string;
+      password?: string;
+    };
+  }) {
     if (!this.browserAvailable || !this.browser) {
       this.logger.warn('Browser not available - cannot create new page');
       return null;
@@ -61,6 +67,7 @@ export class BrowserService implements OnModuleInit, OnModuleDestroy {
         userAgent:
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         viewport: { width: 1366, height: 768 },
+        proxy: options?.proxy,
         extraHTTPHeaders: {
           'Accept-Language': 'en-US,en;q=0.9',
           Accept:
