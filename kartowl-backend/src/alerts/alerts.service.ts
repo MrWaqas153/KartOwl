@@ -3,19 +3,15 @@ import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PriceAlert } from './price-alert.entity';
-import { Resend } from 'resend';
 
 @Injectable()
 export class AlertsService {
   private readonly logger = new Logger(AlertsService.name);
-  private resend: Resend;
 
   constructor(
     @InjectRepository(PriceAlert)
     private readonly alertRepository: Repository<PriceAlert>,
-  ) {
-    this.resend = new Resend(process.env.RESEND_API_KEY);
-  }
+  ) {}
 
   @Cron('0 */6 * * *')
   async checkPriceAlerts() {
@@ -80,63 +76,63 @@ export class AlertsService {
       status: 'active',
     });
 
-    await this.resend.emails.send({
-      from: 'KartOwl <onboarding@resend.dev>',
-      to: email,
-      subject: '🔔 Price Alert Set Successfully!',
-      html: `
+    const htmlContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #4F46E5;">🦉 KartOwl Price Alert</h2>
           <p>Your price alert has been set successfully!</p>
           <table style="width: 100%; border-collapse: collapse;">
-            <tr>
-              <td style="padding: 8px; border: 1px solid #ddd;"><strong>Product</strong></td>
-              <td style="padding: 8px; border: 1px solid #ddd;">${productTitle}</td>
-            </tr>
-            <tr>
-              <td style="padding: 8px; border: 1px solid #ddd;"><strong>Target Price</strong></td>
-              <td style="padding: 8px; border: 1px solid #ddd;">Rs. ${targetPrice.toLocaleString()}</td>
-            </tr>
-            <tr>
-              <td style="padding: 8px; border: 1px solid #ddd;"><strong>Product Link</strong></td>
-              <td style="padding: 8px; border: 1px solid #ddd;"><a href="${productUrl}">View Product</a></td>
-            </tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Product</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${productTitle}</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Target Price</strong></td><td style="padding: 8px; border: 1px solid #ddd;">Rs. ${targetPrice.toLocaleString()}</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Product Link</strong></td><td style="padding: 8px; border: 1px solid #ddd;"><a href="${productUrl}">View Product</a></td></tr>
           </table>
           <p style="color: #666; margin-top: 20px;">We will notify you every 6 hours when the price drops!</p>
         </div>
-      `,
-    });
+    `;
+
+    await this.sendEmailViaBrevo(email, '🔔 Price Alert Set Successfully!', htmlContent);
   }
 
   private async sendPriceDropEmail(alert: PriceAlert, currentPrice: number) {
-    await this.resend.emails.send({
-      from: 'KartOwl <onboarding@resend.dev>',
-      to: alert.email,
-      subject: '🎉 Price Drop Alert! Your target price has been reached!',
-      html: `
+    const htmlContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #10B981;">🎉 Price Drop Alert!</h2>
           <p>Great news! The price has dropped to your target!</p>
           <table style="width: 100%; border-collapse: collapse;">
-            <tr>
-              <td style="padding: 8px; border: 1px solid #ddd;"><strong>Product</strong></td>
-              <td style="padding: 8px; border: 1px solid #ddd;">${alert.productTitle}</td>
-            </tr>
-            <tr>
-              <td style="padding: 8px; border: 1px solid #ddd;"><strong>Current Price</strong></td>
-              <td style="padding: 8px; border: 1px solid #ddd; color: #10B981;"><strong>Rs. ${currentPrice.toLocaleString()}</strong></td>
-            </tr>
-            <tr>
-              <td style="padding: 8px; border: 1px solid #ddd;"><strong>Your Target</strong></td>
-              <td style="padding: 8px; border: 1px solid #ddd;">Rs. ${Number(alert.targetPrice).toLocaleString()}</td>
-            </tr>
-            <tr>
-              <td style="padding: 8px; border: 1px solid #ddd;"><strong>Buy Now</strong></td>
-              <td style="padding: 8px; border: 1px solid #ddd;"><a href="${alert.productUrl}" style="background: #4F46E5; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px;">View Product</a></td>
-            </tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Product</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${alert.productTitle}</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Current Price</strong></td><td style="padding: 8px; border: 1px solid #ddd; color: #10B981;"><strong>Rs. ${currentPrice.toLocaleString()}</strong></td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Your Target</strong></td><td style="padding: 8px; border: 1px solid #ddd;">Rs. ${Number(alert.targetPrice).toLocaleString()}</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Buy Now</strong></td><td style="padding: 8px; border: 1px solid #ddd;"><a href="${alert.productUrl}" style="background: #4F46E5; color: white; padding: 8px 16px; text-decoration: none; border-radius: 4px;">View Product</a></td></tr>
           </table>
         </div>
-      `,
-    });
+    `;
+    await this.sendEmailViaBrevo(alert.email, '🎉 Price Drop Alert! Your target price has been reached!', htmlContent);
+  }
+
+  // 🦉 Yeh function direct Brevo API se email bhejega
+  private async sendEmailViaBrevo(toEmail: string, subject: string, htmlContent: string) {
+    try {
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'api-key': process.env.BREVO_API_KEY as string,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: { name: 'KartOwl', email: process.env.EMAIL_USER }, 
+          to: [{ email: toEmail }],
+          subject: subject,
+          htmlContent: htmlContent
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(`Brevo API Error: ${JSON.stringify(errData)}`);
+      }
+      this.logger.log(`✅ Email successfully sent to ${toEmail}`);
+    } catch (error: any) {
+      this.logger.error(`❌ Failed to send email to ${toEmail}: ${error.message}`);
+    }
   }
 }
