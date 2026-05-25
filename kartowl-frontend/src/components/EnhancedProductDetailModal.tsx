@@ -42,15 +42,15 @@ export default function EnhancedProductDetailModal({ product, open, onOpenChange
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl p-0 overflow-hidden bg-white dark:bg-slate-950 border-none shadow-2xl">
-        <div className="flex flex-col md:flex-row h-[90vh] md:h-[80vh]">
+      <DialogContent className="max-w-5xl p-0 overflow-hidden bg-white dark:bg-slate-950 border-none shadow-2xl w-[95vw] sm:w-auto">
+        <div className="flex flex-col md:flex-row max-h-[92vh] md:h-[80vh] overflow-y-auto md:overflow-hidden">
 
-          <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-900/50 p-6 md:p-10 scrollbar-hide">
-            <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800 p-8 mb-8 flex items-center justify-center">
+          <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-900/50 p-4 sm:p-6 md:p-10 scrollbar-hide">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-100 dark:border-slate-800 p-4 sm:p-8 mb-6 flex items-center justify-center">
               <img
                 src={image}
                 alt={title}
-                className="max-h-[300px] object-contain mix-blend-multiply dark:mix-blend-normal"
+                className="max-h-[160px] sm:max-h-[300px] object-contain mix-blend-multiply dark:mix-blend-normal"
               />
             </div>
             <div className="grid grid-cols-2 gap-4 mb-8">
@@ -93,7 +93,7 @@ export default function EnhancedProductDetailModal({ product, open, onOpenChange
             </div>
           </div>
 
-          <div className="w-full md:w-[400px] bg-white dark:bg-slate-950 p-6 md:p-8 border-l border-slate-100 dark:border-slate-800 flex flex-col z-20">
+          <div className="w-full md:w-[380px] lg:w-[400px] bg-white dark:bg-slate-950 p-4 sm:p-6 md:p-8 border-t md:border-t-0 md:border-l border-slate-100 dark:border-slate-800 flex flex-col z-20">
             <div className="mb-auto">
               <Badge variant="outline" className="mb-4 uppercase">{marketplace}</Badge>
               <h2 className="text-2xl font-bold mb-2">{title}</h2>

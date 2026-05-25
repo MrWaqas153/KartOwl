@@ -111,25 +111,27 @@ export default function PriceHistoryChart({
         </div>
         
         {/* CHART CONTAINER */}
-        <div className="h-[300px] w-full bg-white dark:bg-slate-900/50 rounded-xl p-2">
+        <div className="h-[220px] sm:h-[300px] w-full bg-white dark:bg-slate-900/50 rounded-xl p-1 sm:p-2">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={displayData} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
+            <LineChart data={displayData} margin={{ top: 10, right: 5, left: -15, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200 dark:stroke-slate-700" vertical={false} />
               
               <XAxis 
                 dataKey="date" 
-                tick={{ fontSize: 12, fill: '#94a3b8' }}
+                tick={{ fontSize: 10, fill: '#94a3b8' }}
                 axisLine={false}
                 tickLine={false}
-                dy={10}
+                dy={8}
+                interval="preserveStartEnd"
               />
               
               {/* CRITICAL FIX: Custom Domain to prevent flat-line collapse */}
               <YAxis 
-                tick={{ fontSize: 12, fill: '#94a3b8' }}
+                tick={{ fontSize: 10, fill: '#94a3b8' }}
                 axisLine={false}
                 tickLine={false}
                 tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`}
+                width={35}
                 domain={[
                   (dataMin: number) => (dataMin * 0.95), // Add 5% padding below
                   (dataMax: number) => (dataMax * 1.05)  // Add 5% padding above

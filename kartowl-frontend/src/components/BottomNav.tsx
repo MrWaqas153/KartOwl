@@ -1,42 +1,26 @@
 import { Home as HomeIcon, Search, ShoppingBag } from 'lucide-react';
 
-interface BottomNavProps {
-  onSearchClick?: () => void;
-  onDealsClick?: () => void;
-  onHomeClick?: () => void;
-}
-
-export default function BottomNav({ onSearchClick, onDealsClick, onHomeClick }: BottomNavProps) {
+export default function BottomNav() {
 
   const handleHomeClick = () => {
-    // Scroll to top
+    // Dispatch a custom event so Home.tsx can reset search state
+    window.dispatchEvent(new CustomEvent('kartowl:go-home'));
     window.scrollTo({ top: 0, behavior: 'smooth' });
-
-    // Also call the callback if provided
-    if (onHomeClick) {
-      onHomeClick();
-    }
   };
 
   const handleSearchClick = () => {
-    if (onSearchClick) {
-      onSearchClick();
-    } else {
-      // Just scroll to top as requested
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+    // Scroll to top so the navbar search bar is visible
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Try to focus the search input
+    setTimeout(() => {
+      const input = document.querySelector<HTMLInputElement>('[data-testid="input-navbar-search"]');
+      if (input) input.focus();
+    }, 300);
   };
 
   const handleDealsClick = () => {
-    if (onDealsClick) {
-      onDealsClick();
-    } else {
-      // Scroll to deals section
-      const dealsSection = document.getElementById('deals');
-      if (dealsSection) {
-        dealsSection.scrollIntoView({ behavior: 'smooth' });
-      }
-    }
+    // Dispatch a custom event so Home.tsx can go home first, then scroll
+    window.dispatchEvent(new CustomEvent('kartowl:go-deals'));
   };
 
   return (

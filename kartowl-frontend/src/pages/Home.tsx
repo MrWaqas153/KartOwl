@@ -140,6 +140,35 @@ export default function Home() {
     setDisplayCount(12);
   }, []);
 
+  // Listen for BottomNav custom events
+  useEffect(() => {
+    const handleGoHome = () => {
+      goHome();
+    };
+
+    const handleGoDeals = () => {
+      // If in search results, go home first, then scroll to deals section
+      if (hasSearched) {
+        goHome();
+        setTimeout(() => {
+          const element = document.getElementById('deals');
+          if (element) element.scrollIntoView({ behavior: 'smooth' });
+        }, 150);
+      } else {
+        // Already on home page, just scroll
+        const element = document.getElementById('deals');
+        if (element) element.scrollIntoView({ behavior: 'smooth' });
+      }
+    };
+
+    window.addEventListener('kartowl:go-home', handleGoHome);
+    window.addEventListener('kartowl:go-deals', handleGoDeals);
+    return () => {
+      window.removeEventListener('kartowl:go-home', handleGoHome);
+      window.removeEventListener('kartowl:go-deals', handleGoDeals);
+    };
+  }, [goHome, hasSearched]);
+
   const filteredAndSortedProducts = products.filter(product => {
     const matchesMarketplace = selectedMarketplaces.includes(product.marketplace);
 
