@@ -67,29 +67,38 @@ export class AlertsService {
     }
   }
 
-  async sendConfirmation(email: string, productUrl: string, targetPrice: number, productTitle: string) {
-    await this.alertRepository.save({
-      email,
-      productUrl,
-      productTitle,
-      targetPrice,
-      status: 'active',
-    });
+  // 🦉 Yeh wo function hai jo app.controller dhoond raha tha
+  async createAlert(email: string, productUrl: string, targetPrice: number, productTitle: string) {
+    try {
+      await this.alertRepository.save({
+        email,
+        productUrl,
+        productTitle,
+        targetPrice,
+        status: 'active',
+      });
 
-    const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #4F46E5;">🦉 KartOwl Price Alert</h2>
-          <p>Your price alert has been set successfully!</p>
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Product</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${productTitle}</td></tr>
-            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Target Price</strong></td><td style="padding: 8px; border: 1px solid #ddd;">Rs. ${targetPrice.toLocaleString()}</td></tr>
-            <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Product Link</strong></td><td style="padding: 8px; border: 1px solid #ddd;"><a href="${productUrl}">View Product</a></td></tr>
-          </table>
-          <p style="color: #666; margin-top: 20px;">We will notify you every 6 hours when the price drops!</p>
-        </div>
-    `;
+      const htmlContent = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #4F46E5;">🦉 KartOwl Price Alert</h2>
+            <p>Your price alert has been set successfully!</p>
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Product</strong></td><td style="padding: 8px; border: 1px solid #ddd;">${productTitle}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Target Price</strong></td><td style="padding: 8px; border: 1px solid #ddd;">Rs. ${targetPrice.toLocaleString()}</td></tr>
+              <tr><td style="padding: 8px; border: 1px solid #ddd;"><strong>Product Link</strong></td><td style="padding: 8px; border: 1px solid #ddd;"><a href="${productUrl}">View Product</a></td></tr>
+            </table>
+            <p style="color: #666; margin-top: 20px;">We will notify you every 6 hours when the price drops!</p>
+          </div>
+      `;
 
-    await this.sendEmailViaBrevo(email, '🔔 Price Alert Set Successfully!', htmlContent);
+      await this.sendEmailViaBrevo(email, '🔔 Price Alert Set Successfully!', htmlContent);
+      
+      // Controller ko success message bhejo
+      return { emailSent: true, emailError: null };
+    } catch (error: any) {
+      this.logger.error(`❌ Error in createAlert: ${error.message}`);
+      return { emailSent: false, emailError: error.message };
+    }
   }
 
   private async sendPriceDropEmail(alert: PriceAlert, currentPrice: number) {
@@ -133,6 +142,7 @@ export class AlertsService {
       this.logger.log(`✅ Email successfully sent to ${toEmail}`);
     } catch (error: any) {
       this.logger.error(`❌ Failed to send email to ${toEmail}: ${error.message}`);
+      throw error; // Is throw ki wajah se createAlert ko pata chal jayega ke email fail hui hai
     }
   }
 }
