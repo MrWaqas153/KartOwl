@@ -4,7 +4,6 @@ import type { ProductInfo, ProductComparison, ProductRecommendations, ProductRep
 // Initialize with your API key
 const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || '');
 
-// Use gemini-1.5-flash for speed
 const model = genAI.getGenerativeModel({
     model: 'gemini-2.5-flash-lite',
     safetySettings: [
@@ -15,7 +14,6 @@ const model = genAI.getGenerativeModel({
     ],
 });
 
-// Use a standard model for simple JSON tasks
 const jsonModel = genAI.getGenerativeModel({
     model: 'gemini-2.5-flash-lite',
     safetySettings: [
@@ -41,7 +39,6 @@ function addApiLog(log: any) {
     console.log(`API Log [${log.type}]:`, log);
 }
 
-// --- Helper for JSON Extraction ---
 async function generateJson<T>(prompt: string, logType: string): Promise<T> {
     const timestamp = new Date().toISOString();
     try {
@@ -50,10 +47,10 @@ async function generateJson<T>(prompt: string, logType: string): Promise<T> {
         const result = await jsonModel.generateContent(prompt);
         const text = result.response.text();
 
-        const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{[\s\S]*?}/);
+        const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|(\{[\s\S]*\})/);
         if (!jsonMatch) throw new Error('No valid JSON found in response');
 
-        const parsed = JSON.parse(jsonMatch[0].replace(/```json|```/g, '').trim());
+        const parsed = JSON.parse((jsonMatch[1] || jsonMatch[2]).trim());
 
         addApiLog({ timestamp, type: 'gemini', endpoint: logType, response: { status: 200, body: 'Success' } });
         return parsed as T;
@@ -62,8 +59,6 @@ async function generateJson<T>(prompt: string, logType: string): Promise<T> {
         throw error;
     }
 }
-
-// --- Core Features ---
 
 export async function fetchProductInfo(productName: string): Promise<ProductInfo> {
     const prompt = `Provide a feature list for "${productName}".
@@ -109,15 +104,12 @@ export async function fetchProductRecommendations(userDescription: string): Prom
     return generateJson<ProductRecommendations>(prompt, 'fetchProductRecommendations');
 }
 
-// --- Unified Research Function ---
-
 export async function performDeepResearch(
     productName: string,
     features: FeatureSet
 ): Promise<ProductReport> {
     const timestamp = new Date().toISOString();
 
-    // NEW PROMPT: Extremely strict constraint for brevity
     const prompt = `Review "${productName}" based on these priorities: ${features.veryImportant.join(', ')}.
   
   CRITICAL: Do not write a full report. 
@@ -137,12 +129,11 @@ export async function performDeepResearch(
         addApiLog({ timestamp, type: 'gemini', endpoint: 'deepResearch', request: { productName } });
         const result = await model.generateContent(prompt);
         const text = result.response.text();
-        const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{[\s\S]*?}/);
+        const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|(\{[\s\S]*\})/);
 
         if (!jsonMatch) throw new Error('Invalid AI response');
 
-        // Parse and return
-        const parsedData = JSON.parse(jsonMatch[0].replace(/```json|```/g, '').trim());
+        const parsedData = JSON.parse((jsonMatch[1] || jsonMatch[2]).trim());
         return parsedData;
 
     } catch (error) {
@@ -151,7 +142,6 @@ export async function performDeepResearch(
     }
 }
 
-// ALSO UPDATE: Multi-product comparison prompt
 export async function generateComparisonReport(products: string[], features: FeatureSet, reports: string[]): Promise<string> {
     const prompt = `Compare these products: ${products.join(', ')}.
    Priorities: ${JSON.stringify(features)}.
@@ -166,26 +156,29 @@ export async function generateComparisonReport(products: string[], features: Fea
     return JSON.stringify(res);
 }
 
-// --- New Feature: Product Review/Verdict ---
-
 export async function reviewProduct(productName: string, userPreferences: string): Promise<ReviewResult> {
-    const prompt = `Act as an expert product reviewer.
-  Product: "${productName}"
-  User Requirements/Preferences: "${userPreferences}"
+    const prompt = `You are a Pakistani tech shopping expert.
+  User wants: "${productName}"
+  Their requirements: "${userPreferences}"
 
-  Analyze if this product actually meets the user's specific needs.
-  If the product is a good match, verdict should be "Recommended".
-  If the product fails to meet key requirements or is a bad fit, verdict should be "Not Recommended".
+  Based on these requirements, identify the SINGLE BEST specific product available in Pakistan that matches.
   
-  Provide a match score from 0 to 100.
-  Provide a concise explanation (2-3 sentences) justifying the verdict based on the requirements.
+  Then provide:
+  1. The exact product name (brand + model)
+  2. Its top 3 key specs in simple one-liners
+  3. A 2-line summary of what real users say about it (common praise and common complaint)
 
   Respond in this exact JSON format:
   {
-    "productName": "${productName}",
-    "verdict": "Recommended", 
-    "matchScore": 85,
-    "explanation": "The product meets most of your requirements, specifically..."
+    "productName": "Exact Product Name e.g. Samsung Galaxy A55 5G",
+    "verdict": "Recommended",
+    "matchScore": 90,
+    "explanation": "Users love its battery life and clean software. Some complain about average low-light camera performance.",
+    "specs": [
+      "Processor: Snapdragon 778G — smooth daily performance",
+      "Battery: 5000mAh — easily lasts full day",
+      "Camera: 50MP OIS — great daylight shots"
+    ]
   }`;
 
     return generateJson<ReviewResult>(prompt, 'reviewProduct');

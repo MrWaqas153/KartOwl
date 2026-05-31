@@ -1,0 +1,2034 @@
+================================================================================
+                    🦉 KARTOWL - PROJECT CONTEXT & COMPLETE CODEBASE 🦉
+================================================================================
+This document provides a comprehensive overview and the complete source code of
+the KartOwl application. It is designed to give Language Models (LLMs) such as
+Gemini, Claude, and GPT a complete, deep, and context-rich understanding of
+the project's architecture, data flows, AI logic, and components.
+
+================================================================================
+1. PROJECT OVERVIEW & ARCHITECTURE
+================================================================================
+KartOwl is a real-time, Pakistani e-commerce comparison shopping and price tracking
+platform. It aggregates product details, prices, stock statuses, ratings, reviews,
+and price history from multiple Pakistani marketplaces (Daraz, PriceOye, Telemart, OLX).
+
+Key Features:
+1. Multi-Marketplace Scraping: Scrapes products in parallel using Playwright-stealth.
+2. Resilience: Failed scrapers do not block successful scrapers from other sites.
+3. Smart Result Interleaving: Combines and distributes products to ensure diverse results.
+4. Caching Layer: Redis-based search-results caching.
+5. Persistent Tracking: PostgreSQL logs price points to track history and generate deals.
+6. Email Price Alerts: SMTP-based notifications when a product drops below a user-selected threshold.
+7. AI Shopping Assistant: Integration with Google Gemini for feature lists, comparisons,
+   buyer recommendations, product reviews/verdicts, and deep-research reports.
+
+Technology Stack:
+- Backend: NestJS, TypeORM, CacheManager, Playwright Extra, PostgreSQL, Redis, Nodemailer
+- Frontend: React (Vite), TypeScript, TailwindCSS, Lucide React, Recharts, Wouter, Radix UI
+
+================================================================================
+2. AI-SPECIFIC ARCHITECTURE & LOGIC
+================================================================================
+KartOwl implements an interactive AI assistant ("Owl AI") on the frontend that
+uses Gemini 2.5 Flash Lite to perform semantic analysis and research.
+
+AI Capabilities:
+1. Single Product Research / Verdict (reviewProduct):
+   Analyzes if a specific product meets a user's requirements, returning a verdict
+   ("Recommended" / "Not Recommended"), match score (0-100), and concise justification.
+2. Alternative Product Recommendations (fetchProductComparisons):
+   Recommends top alternatives for a given product and creates feature comparison metrics.
+3. Need-Based Buying Advice (fetchProductRecommendations):
+   Accepts arbitrary user descriptions (e.g., "laptop for video editing under 1.5 Lac")
+   and identifies key specs to check alongside recommended products.
+4. Deep Research Report (performDeepResearch):
+   Summarizes how a product aligns with specific user feature priorities.
+5. Multi-Product Comparison (generateComparisonReport):
+   Evaluates multiple products against user preferences and outputs a verdict/winner.
+
+All AI calls go directly from the frontend using the `@google/generative-ai` SDK
+configured with the browser's `VITE_GEMINI_API_KEY`. An inline logging wrapper
+(`addApiLog`) saves API transactions for debugging.
+
+================================================================================
+3. COMPLETE AI CODEBASE
+================================================================================
+
+--------------------------------------------------------------------------------
+[FRONTEND] src/lib/gemini.ts
+--------------------------------------------------------------------------------
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import type { ProductInfo, ProductComparison, ProductRecommendations, ProductReport, FeatureSet, ReviewResult } from '@/types/product';
+
+// Initialize with your API key
+const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY || '');
+
+// Use gemini-2.5-flash-lite for general speed
+const model = genAI.getGenerativeModel({
+    model: 'gemini-2.5-flash-lite',
+    safetySettings: [
+        {
+            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+    ],
+});
+
+// Use a standard model for simple JSON tasks
+const jsonModel = genAI.getGenerativeModel({
+    model: 'gemini-2.5-flash-lite',
+    safetySettings: [
+        {
+            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+    ],
+});
+
+let apiLogs: any[] = [];
+
+export function getApiLogs() {
+    return apiLogs;
+}
+
+export function clearApiLogs() {
+    apiLogs = [];
+}
+
+function addApiLog(log: any) {
+    apiLogs.push(log);
+    console.log(`API Log [${log.type}]:`, log);
+}
+
+// --- Helper for JSON Extraction ---
+async function generateJson<T>(prompt: string, logType: string): Promise<T> {
+    const timestamp = new Date().toISOString();
+    try {
+        addApiLog({ timestamp, type: 'gemini', endpoint: logType, request: { prompt: prompt.substring(0, 100) + '...' } });
+
+        const result = await jsonModel.generateContent(prompt);
+        const text = result.response.text();
+
+        const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{[\s\S]*?}/);
+        if (!jsonMatch) throw new Error('No valid JSON found in response');
+
+        const parsed = JSON.parse(jsonMatch[0].replace(/```json|```/g, '').trim());
+
+        addApiLog({ timestamp, type: 'gemini', endpoint: logType, response: { status: 200, body: 'Success' } });
+        return parsed as T;
+    } catch (error) {
+        addApiLog({ timestamp, type: 'gemini', endpoint: logType, error: { message: error instanceof Error ? error.message : 'Unknown error' } });
+        throw error;
+    }
+}
+
+// --- Core Features ---
+
+export async function fetchProductInfo(productName: string): Promise<ProductInfo> {
+    const prompt = `Provide a feature list for "${productName}".
+  Include the top 6 most meaningful and relevant attributes (features) and their descriptions.
+  Each feature name MUST be in Title Case format.
+  Respond in this exact JSON format:
+  {
+    "productName": "${productName}",
+    "considerations": [
+      { "key": "Feature Name", "value": "Description" }
+    ]
+  }`;
+    return generateJson<ProductInfo>(prompt, 'fetchProductInfo');
+}
+
+export async function fetchProductComparisons(productName: string): Promise<ProductComparison> {
+    const prompt = `Suggest top 3 alternative products for "${productName}".
+  Respond in this exact JSON format:
+  {
+    "mainProduct": "${productName}",
+    "alternatives": [
+      { "name": "Alt Product Name", "considerations": [{ "key": "Feature", "value": "Comparison" }] }
+    ]
+  }`;
+    return generateJson<ProductComparison>(prompt, 'fetchProductComparisons');
+}
+
+export async function fetchProductRecommendations(userDescription: string): Promise<ProductRecommendations> {
+    const prompt = `Based on this user need: "${userDescription}", identify the 6 most important technical specifications or features a buyer should consider. 
+  Also, suggest the top 4 specific products that best meet this description.
+  
+  Respond in this exact JSON format:
+  {
+    "recommendations": [
+      { 
+        "name": "Product Name", 
+        "considerations": [
+          { "key": "Feature Name", "value": "Why it matters for this product" }
+        ] 
+      }
+    ]
+  }`;
+    return generateJson<ProductRecommendations>(prompt, 'fetchProductRecommendations');
+}
+
+// --- Unified Research Function ---
+
+export async function performDeepResearch(
+    productName: string,
+    features: FeatureSet
+): Promise<ProductReport> {
+    const timestamp = new Date().toISOString();
+
+    // Constraint for brevity
+    const prompt = `Review "${productName}" based on these priorities: ${features.veryImportant.join(', ')}.
+  
+  CRITICAL: Do not write a full report. 
+  Output a SINGLE JSON object with a "finalReport" field containing exactly 2 or 3 sentences.
+  The sentences must clearly state if the product is good and why, addressing the user's top priority.
+  
+  Respond in this exact JSON format:
+  {
+    "productName": "${productName}",
+    "youtubeResults": [], 
+    "websiteResults": "",
+    "redditResults": "",
+    "finalReport": "Your 2-3 sentence verdict here."
+  }`;
+
+    try {
+        addApiLog({ timestamp, type: 'gemini', endpoint: 'deepResearch', request: { productName } });
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{[\s\S]*?}/);
+
+        if (!jsonMatch) throw new Error('Invalid AI response');
+
+        const parsedData = JSON.parse(jsonMatch[0].replace(/```json|```/g, '').trim());
+        return parsedData;
+
+    } catch (error) {
+        addApiLog({ timestamp, type: 'gemini', endpoint: 'deepResearch', error: { message: error instanceof Error ? error.message : 'Timeout' } });
+        throw error;
+    }
+}
+
+// Multi-product comparison
+export async function generateComparisonReport(products: string[], features: FeatureSet, reports: string[]): Promise<string> {
+    const prompt = `Compare these products: ${products.join(', ')}.
+   Priorities: ${JSON.stringify(features)}.
+   
+   Output ONLY a 2-3 sentence recommendation. 
+   Name the winner clearly and give the main reason why.
+   Do not use introduction, limitations, or feature lists.
+   
+   Return JSON: { "verdict": "The 2-3 sentence text here" }`;
+
+    const res = await generateJson<any>(prompt, 'comparisonReport');
+    return JSON.stringify(res);
+}
+
+// Product Review / Verdict
+export async function reviewProduct(productName: string, userPreferences: string): Promise<ReviewResult> {
+    const prompt = `Act as an expert product reviewer.
+  Product: "${productName}"
+  User Requirements/Preferences: "${userPreferences}"
+
+  Analyze if this product actually meets the user's specific needs.
+  If the product is a good match, verdict should be "Recommended".
+  If the product fails to meet key requirements or is a bad fit, verdict should be "Not Recommended".
+  
+  Provide a match score from 0 to 100.
+  Provide a concise explanation (2-3 sentences) justifying the verdict based on the requirements.
+
+  Respond in this exact JSON format:
+  {
+    "productName": "${productName}",
+    "verdict": "Recommended", 
+    "matchScore": 85,
+    "explanation": "The product meets most of your requirements, specifically..."
+  }`;
+
+    return generateJson<ReviewResult>(prompt, 'reviewProduct');
+}
+
+--------------------------------------------------------------------------------
+[FRONTEND] src/lib/research.ts
+--------------------------------------------------------------------------------
+import { performDeepResearch, generateComparisonReport, getApiLogs as getGeminiLogs } from './gemini';
+import type { Product, ResearchResults, FeatureSet, ApiLog } from '@/types/product';
+
+// Simple cache
+const researchCache: Record<string, any> = {};
+
+export async function prefetchProductData(productName: string): Promise<void> {
+    console.log(`Prefetching hint for ${productName}`);
+}
+
+export async function performResearch(
+    productName: string,
+    features: FeatureSet
+): Promise<ResearchResults> {
+    try {
+        const report = await performDeepResearch(productName, features);
+        return { reports: [report] };
+    } catch (error) {
+        const errorWithLogs = new Error('Research failed');
+        (errorWithLogs as any).logs = getGeminiLogs();
+        throw errorWithLogs;
+    }
+}
+
+export async function performMultiProductResearch(
+    products: Product[],
+    features: FeatureSet
+): Promise<ResearchResults> {
+    try {
+        const productList = products.filter(p => p.name !== 'Features');
+
+        // Run research in parallel
+        const reports = await Promise.all(
+            productList.map(product => performDeepResearch(product.name, features))
+        );
+
+        let comparisonReport: string | undefined;
+        if (reports.length > 1) {
+            comparisonReport = await generateComparisonReport(
+                reports.map(r => r.productName),
+                features,
+                reports.map(r => typeof r.finalReport === 'string' ? r.finalReport : JSON.stringify(r.finalReport))
+            );
+        }
+
+        return { reports, comparisonReport };
+    } catch (error) {
+        const errorWithLogs = new Error('Research failed');
+        (errorWithLogs as any).logs = getGeminiLogs();
+        throw errorWithLogs;
+    }
+}
+
+--------------------------------------------------------------------------------
+[FRONTEND] src/components/AiAssistantPopup.tsx
+--------------------------------------------------------------------------------
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Button } from "@/components/ui/button";
+import { Bot, X } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { getApiLogs, clearApiLogs, fetchProductInfo, fetchProductComparisons, fetchProductRecommendations, performDeepResearch, generateComparisonReport, reviewProduct } from '@/lib/gemini';
+import { performResearch, performMultiProductResearch } from '@/lib/research';
+import type { MainOption, ResearchType, Option, Product, Step, ResearchResults, ReviewResult } from '@/types/product';
+import { ErrorDialog } from "@/components/ui/error-dialog";
+import { StepOne } from "./ProductReviewer/StepOne";
+import { StepOnePointTwoFive } from "./ProductReviewer/StepOnePointTwoFive";
+import { StepOnePointFive } from "./ProductReviewer/StepOnePointFive";
+import { StepTwo } from "./ProductReviewer/StepTwo";
+import { StepThree } from "./ProductReviewer/StepThree";
+import { StepFour } from "./ProductReviewer/StepFour";
+import { StepFive } from "./ProductReviewer/StepFive";
+
+export function AiAssistantPopup() {
+    const [open, setOpen] = useState(false);
+    const [step, setStep] = useState<Step>(1);
+    const [mainOption, setMainOption] = useState<MainOption>(null);
+    const [researchType, setResearchType] = useState<ResearchType>(null);
+    const [option, setOption] = useState<Option>(null);
+    const [input, setInput] = useState("");
+    const [userPreferences, setUserPreferences] = useState("");
+    const [products, setProducts] = useState<Product[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [newFeature, setNewFeature] = useState("");
+    const [research, setResearch] = useState<ResearchResults | ReviewResult | null>(null);
+    const { toast } = useToast();
+
+    const resetState = () => {
+        setStep(1);
+        setMainOption(null);
+        setResearchType(null);
+        setOption(null);
+        setInput("");
+        setUserPreferences("");
+        setProducts([]);
+        setResearch(null);
+        clearApiLogs();
+    };
+
+    const handleMainOptionSelect = (selectedOption: MainOption) => {
+        setMainOption(selectedOption);
+        if (selectedOption === 'known') {
+            setStep(1.25);
+        } else {
+            setOption('recommend');
+            setStep(2);
+        }
+    };
+
+    const handleResearchTypeSelect = (type: ResearchType) => {
+        setResearchType(type);
+        if (type === 'single') {
+            setOption('research');
+            setStep(1.5);
+        } else {
+            setOption('compare');
+            setStep(1.5);
+        }
+    };
+
+    const handleOptionSelect = async (selectedOption: Option) => {
+        setOption(selectedOption);
+        if (!input.trim()) return;
+
+        setLoading(true);
+        try {
+            switch (selectedOption) {
+                case 'research': {
+                    const review = await reviewProduct(input, userPreferences);
+                    setResearch(review);
+                    setStep(5);
+                    break;
+                }
+                case 'compare': {
+                    const comparisons = await fetchProductComparisons(input);
+                    setProducts([
+                        { name: comparisons.mainProduct, features: [] },
+                        ...comparisons.alternatives.map(alt => ({ name: alt.name, features: [] }))
+                    ]);
+                    setStep(3);
+                    break;
+                }
+                case 'recommend': {
+                    const recs = await fetchProductRecommendations(input);
+                    const featureList = recs.recommendations[0].considerations.map((c, i) => ({
+                        id: i,
+                        name: c.key,
+                        importance: 'Important' as const
+                    }));
+
+                    setProducts([
+                        { name: 'Features', features: featureList },
+                        ...recs.recommendations.map(r => ({ name: r.name, features: [] }))
+                    ]);
+                    setStep(3);
+                    break;
+                }
+            }
+        } catch (error) {
+            console.error(error);
+            toast({
+                title: "Error",
+                description: "Failed to fetch data. Please try again.",
+                variant: "destructive"
+            });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleStartResearch = async () => {
+        setLoading(true);
+        try {
+            const featuresProduct = products.find(p => p.name === 'Features');
+            const featureSet = {
+                veryImportant: featuresProduct?.features.filter(f => f.importance === 'Very Important').map(f => f.name) || [],
+                important: featuresProduct?.features.filter(f => f.importance === 'Important').map(f => f.name) || []
+            };
+
+            if (option === 'research') {
+                const results = await performResearch(products[0].name, featureSet);
+                setResearch(results);
+            } else {
+                const results = await performMultiProductResearch(products, featureSet);
+                setResearch(results);
+            }
+            setStep(5);
+        } catch (error) {
+            console.error(error);
+            toast({
+                title: "Research Failed",
+                description: "An error occurred during the research process.",
+                variant: "destructive",
+            });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleBack = () => {
+        if (step === 1.25) {
+            setStep(1);
+        } else if (step === 1.5) {
+            setStep(1.25);
+        } else if (step === 2) {
+            setStep(1);
+        } else if (step === 3) {
+            if (option === 'recommend') setStep(2);
+            else if (option === 'compare') setStep(1.5);
+            else setStep(1.5);
+
+        } else if (step === 5) {
+            if (option === 'research') {
+                setStep(1.5);
+            } else {
+                setStep(3);
+            }
+            setResearch(null);
+        }
+    };
+
+    return createPortal(
+        <>
+            {/* Floating AI Assistant pill design */}
+            <div
+                className="fixed bottom-24 right-4 md:bottom-8 md:right-6 cursor-pointer group"
+                style={{
+                    position: 'fixed',
+                    zIndex: 99999,
+                }}
+                onClick={() => setOpen(true)}
+            >
+                <div
+                    className="flex items-center gap-3 bg-white rounded-full p-1.5 md:pl-4 md:pr-2 md:py-2 shadow-xl border border-gray-100 transition-all duration-300 hover:shadow-2xl hover:scale-105"
+                    style={{
+                        boxShadow: '0 4px 20px rgba(124, 58, 237, 0.25), 0 2px 8px rgba(0, 0, 0, 0.1)'
+                    }}
+                >
+                    <span className="hidden md:inline text-gray-700 font-semibold text-sm whitespace-nowrap">
+                        Ask <span className="text-brand-purple">Owl AI</span>
+                    </span>
+                    <div className="relative">
+                        <div
+                            className="h-10 w-10 rounded-full bg-brand-purple flex items-center justify-center transition-transform duration-200 group-hover:scale-110"
+                        >
+                            <Bot className="h-5 w-5 text-white" />
+                        </div>
+                        <div className="absolute -top-0.5 -right-0.5 h-3 w-3 bg-green-500 rounded-full border-2 border-white animate-pulse" />
+                    </div>
+                </div>
+            </div>
+
+            {/* Chat Popup */}
+            {open && (
+                <>
+                    <div
+                        className="fixed inset-0 bg-black/30 z-[99997] md:hidden"
+                        onClick={() => setOpen(false)}
+                    />
+                    <div
+                        className="fixed bottom-36 left-4 right-4 md:bottom-24 md:left-auto md:right-6 md:w-[420px] max-h-[60vh] md:max-h-[70vh] rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden z-[99998] animate-in fade-in slide-in-from-bottom-4 duration-300"
+                        style={{
+                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)'
+                        }}
+                    >
+                        {/* Header */}
+                        <div className="bg-brand-purple px-4 py-3 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Bot className="h-5 w-5 text-white" />
+                                <h2 className="text-white font-semibold">Owl AI Assistant</h2>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {step > 1 && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={resetState}
+                                        className="text-white/80 hover:text-white hover:bg-white/10 h-8 px-2"
+                                    >
+                                        Reset
+                                    </Button>
+                                )}
+                                <button
+                                    onClick={() => setOpen(false)}
+                                    className="text-white/80 hover:text-white hover:bg-white/10 rounded-full p-1 transition-colors"
+                                >
+                                    <X className="h-5 w-5" />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-4 overflow-y-auto max-h-[calc(70vh-56px)]">
+                            {step === 1 && <StepOne onOptionSelect={handleMainOptionSelect} />}
+
+                            {step === 1.25 && (
+                                <StepOnePointTwoFive
+                                    onResearchTypeSelect={handleResearchTypeSelect}
+                                    onBack={handleBack}
+                                />
+                            )}
+
+                            {step === 1.5 && (
+                                <StepOnePointFive
+                                    input={input}
+                                    loading={loading}
+                                    onInputChange={setInput}
+                                    onOptionSelect={(opt) => handleOptionSelect(opt)}
+                                    onBack={handleBack}
+                                    researchType={researchType}
+                                    userPreferences={userPreferences}
+                                    onUserPreferencesChange={setUserPreferences}
+                                />
+                            )}
+
+                            {step === 2 && (
+                                <StepTwo
+                                    option={option}
+                                    input={input}
+                                    loading={loading}
+                                    onInputChange={setInput}
+                                    onSubmit={(e) => {
+                                        e.preventDefault();
+                                        handleOptionSelect(option);
+                                    }}
+                                    onBack={handleBack}
+                                />
+                            )}
+
+                            {step === 3 && (
+                                <StepThree
+                                    products={products}
+                                    newFeature={newFeature}
+                                    option={option}
+                                    onNewFeatureChange={setNewFeature}
+                                    onAddFeature={() => { }}
+                                    onImportanceChange={(pIdx, fId, imp) => {
+                                        const newProducts = [...products];
+                                        const feature = newProducts[pIdx].features.find(f => f.id === fId);
+                                        if (feature) feature.importance = imp;
+                                        setProducts(newProducts);
+                                    }}
+                                    onBack={handleBack}
+                                    onContinue={() => {
+                                        handleStartResearch();
+                                    }}
+                                    loading={loading}
+                                    onProductsChange={setProducts}
+                                />
+                            )}
+
+                            {step === 5 && research && (
+                                <StepFive
+                                    research={research}
+                                    onBack={handleBack}
+                                />
+                            )}
+
+                            <div className="mt-4 flex justify-center">
+                                <ErrorDialog logs={getApiLogs()} />
+                            </div>
+                        </div>
+                    </div>
+                </>
+            )}
+        </>,
+        document.body
+    );
+}
+
+================================================================================
+4. COMPLETE BACKEND CODEBASE
+================================================================================
+
+--------------------------------------------------------------------------------
+[BACKEND] src/main.ts
+--------------------------------------------------------------------------------
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { ValidationPipe } from '@nestjs/common';
+import helmet from 'helmet';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // Security Headers via Helmet
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        scriptSrc: ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }));
+
+  // CORS Configuration
+  const allowedOrigins = process.env.CORS_ORIGINS
+    ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+    : ['http://localhost:5173', 'http://localhost:3000'];
+
+  app.enableCors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`CORS blocked origin: ${origin}`);
+        callback(null, false);
+      }
+    },
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true,
+  });
+
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+    transformOptions: {
+      enableImplicitConversion: true,
+    },
+  }));
+
+  const port = process.env.PORT || 3000;
+  await app.listen(port);
+  console.log(`🦉 KartOwl Backend running on port ${port}`);
+}
+bootstrap();
+
+--------------------------------------------------------------------------------
+[BACKEND] src/app.module.ts
+--------------------------------------------------------------------------------
+import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { AppController } from './app.controller';
+import { DarazService } from './daraz.service';
+import { PriceOyeService } from './priceoye.service';
+import { TelemartService } from './telemart.service';
+import { OlxService } from './olx.service';
+import { BrowserService } from './browser.service';
+import { HistoryService } from './history.service';
+import { CacheModule } from '@nestjs/cache-manager';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ProductHistory } from './entities/product-history.entity';
+import { AlertsModule } from './alerts/alerts.module';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot(),
+    ThrottlerModule.forRoot([{
+      name: 'default',
+      ttl: 60000,
+      limit: 5,
+    }]),
+    TypeOrmModule.forRoot({
+      type: 'postgres',
+      host: process.env.TYPEORM_HOST ?? 'localhost',
+      port: parseInt(process.env.TYPEORM_PORT ?? '5432'),
+      username: process.env.TYPEORM_USERNAME ?? 'postgres',
+      password: process.env.TYPEORM_PASSWORD ?? 'postgres',
+      database: process.env.TYPEORM_DATABASE ?? 'kartowl_db',
+      entities: [ProductHistory],
+      synchronize: true,
+      logging: true,
+    }),
+    TypeOrmModule.forFeature([ProductHistory]),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => {
+        const redisHost = configService.get<string>('REDIS_HOST');
+        if (redisHost) {
+          const store = await import('cache-manager-redis-store');
+          return {
+            store: store.redisStore,
+            host: redisHost,
+            port: configService.get<number>('REDIS_PORT') || 6379,
+            password: configService.get<string>('REDIS_PASSWORD'),
+            username: configService.get<string>('REDIS_USERNAME'),
+            no_ready_check: true,
+            ttl: 3600,
+          };
+        }
+        return {
+          ttl: 3600000,
+        };
+      },
+      inject: [ConfigService],
+    }),
+    AlertsModule,
+  ],
+  controllers: [AppController],
+  providers: [
+    BrowserService,
+    DarazService,
+    PriceOyeService,
+    TelemartService,
+    OlxService,
+    HistoryService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
+})
+export class AppModule { }
+
+--------------------------------------------------------------------------------
+[BACKEND] src/app.controller.ts
+--------------------------------------------------------------------------------
+import { Controller, Get, Query, Inject, Post, Body, UseInterceptors } from '@nestjs/common';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
+import { SkipThrottle } from '@nestjs/throttler';
+import { DarazService } from './daraz.service';
+import { PriceOyeService } from './priceoye.service';
+import { TelemartService } from './telemart.service';
+import { OlxService } from './olx.service';
+import { HistoryService } from './history.service';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
+import { AlertsService } from './alerts/alerts.service';
+import { SearchDto } from './dto/search.dto';
+import { interleaveArrays } from './utils/product-sorting.utils';
+
+interface MarketplaceStatus {
+  success: boolean;
+  count: number;
+  error?: string;
+}
+
+interface SearchResponse {
+  success: boolean;
+  count: number;
+  marketplaceStatus: {
+    daraz: MarketplaceStatus;
+    priceoye: MarketplaceStatus;
+    telemart: MarketplaceStatus;
+    olx: MarketplaceStatus;
+  };
+  data: any[];
+}
+
+@Controller('api')
+export class AppController {
+  constructor(
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly darazService: DarazService,
+    private readonly priceOyeService: PriceOyeService,
+    private readonly telemartService: TelemartService,
+    private readonly olxService: OlxService,
+    private readonly historyService: HistoryService,
+    private readonly alertsService: AlertsService
+  ) { }
+
+  @Get('search')
+  async search(@Query() searchDto: SearchDto): Promise<SearchResponse> {
+    const query = searchDto.q;
+    const cacheKey = `search:${query.toLowerCase().trim()}`;
+
+    const cachedData = await this.cacheManager.get<SearchResponse>(cacheKey);
+    if (cachedData) {
+      console.log(`⚡ Serving from cache: ${query}`);
+      return cachedData;
+    }
+
+    console.log(`🚀 Scrapers engaged: ${query}`);
+
+    const marketplaceStatus: SearchResponse['marketplaceStatus'] = {
+      daraz: { success: false, count: 0 },
+      priceoye: { success: false, count: 0 },
+      telemart: { success: false, count: 0 },
+      olx: { success: false, count: 0 },
+    };
+
+    const [darazResult, priceOyeResult, telemartResult, olxResult] = await Promise.all([
+      this.safeSearch('daraz', () => this.darazService.searchProduct(query)),
+      this.safeSearch('priceoye', () => this.priceOyeService.searchProduct(query)),
+      this.safeSearch('telemart', () => this.telemartService.searchProduct(query)),
+      this.safeSearch('olx', () => this.olxService.searchProduct(query)),
+    ]);
+
+    marketplaceStatus.daraz = darazResult.status;
+    marketplaceStatus.priceoye = priceOyeResult.status;
+    marketplaceStatus.telemart = telemartResult.status;
+    marketplaceStatus.olx = olxResult.status;
+
+    const allProducts = interleaveArrays(
+      darazResult.products,
+      priceOyeResult.products,
+      telemartResult.products,
+      olxResult.products
+    );
+
+    const results: SearchResponse = {
+      success: true,
+      count: allProducts.length,
+      marketplaceStatus,
+      data: allProducts
+    };
+
+    await this.cacheManager.set(cacheKey, results);
+
+    allProducts.forEach((product: any) => {
+      this.historyService.addPricePoint({
+        url: product.productUrl,
+        title: product.title,
+        price: product.currentPrice,
+        marketplace: product.marketplace,
+        originalPrice: product.originalPrice,
+        discount: product.discount,
+        imageUrl: product.image,
+      }).catch(err => console.error("History save failed", err));
+    });
+
+    return results;
+  }
+
+  private async safeSearch(
+    marketplace: string,
+    scraper: () => Promise<any[]>
+  ): Promise<{ products: any[]; status: MarketplaceStatus }> {
+    try {
+      const products = await scraper();
+      console.log(`✅ ${marketplace}: Found ${products.length} products`);
+      return {
+        products,
+        status: { success: true, count: products.length }
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`❌ ${marketplace} failed:`, errorMessage);
+      return {
+        products: [],
+        status: { success: false, count: 0, error: errorMessage }
+      };
+    }
+  }
+
+  @Get('history')
+  @SkipThrottle()
+  async getPriceHistory(@Query('url') productUrl: string) {
+    if (!productUrl) return { error: 'Product URL is required' };
+
+    const history = await this.historyService.getHistory(productUrl);
+    return {
+      success: true,
+      count: history.length,
+      data: history
+    };
+  }
+
+  @Get('trending')
+  @SkipThrottle()
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(3600000)
+  async getTrending() {
+    const deals = await this.historyService.getTrendingDeals();
+    return deals.length > 0 ? deals : [];
+  }
+
+  @Post('alerts')
+  async createAlert(@Body() body: any) {
+    console.log("🔔 New Alert Requested:", body);
+    await this.alertsService.sendConfirmation(body.email, body.productUrl, body.targetPrice);
+    return { success: true };
+  }
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/browser.service.ts
+--------------------------------------------------------------------------------
+import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
+
+@Injectable()
+export class BrowserService implements OnModuleInit, OnModuleDestroy {
+  private browser: any = null;
+  private browserAvailable: boolean = false;
+  private readonly logger = new Logger(BrowserService.name);
+
+  async onModuleInit() {
+    try {
+      const { chromium } = await import('playwright-extra');
+      const stealthPlugin = (await import('puppeteer-extra-plugin-stealth')).default;
+
+      chromium.use(stealthPlugin());
+
+      this.logger.log('🕵️ Launching Stealth Singleton Browser...');
+      this.browser = await chromium.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-blink-features=AutomationControlled'
+        ]
+      });
+      this.browserAvailable = true;
+      this.logger.log('✅ Browser launched successfully');
+    } catch (error) {
+      this.browserAvailable = false;
+      this.logger.warn('⚠️ Playwright browser not available - web scraping features disabled');
+      this.logger.warn(`Reason: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async onModuleDestroy() {
+    if (this.browser) {
+      this.logger.log('🛑 Closing Browser Instance...');
+      await this.browser.close();
+    }
+  }
+
+  isBrowserAvailable(): boolean {
+    return this.browserAvailable;
+  }
+
+  async getNewPage() {
+    if (!this.browserAvailable || !this.browser) {
+      this.logger.warn('Browser not available - cannot create new page');
+      return null;
+    }
+
+    try {
+      if (!this.browser) await this.onModuleInit();
+
+      const context = await this.browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        viewport: { width: 1366, height: 768 },
+      });
+
+      const page = await context.newPage();
+      return { page, context };
+    } catch (error) {
+      this.logger.error('Failed to create new page', error);
+      return null;
+    }
+  }
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/daraz.service.ts
+--------------------------------------------------------------------------------
+import { Injectable } from '@nestjs/common';
+import { BrowserService } from './browser.service';
+import { randomDelay } from './utils/throttle.utils';
+
+@Injectable()
+export class DarazService {
+  constructor(private readonly browserService: BrowserService) { }
+
+  async searchProduct(query: string) {
+    const browserSession = await this.browserService.getNewPage();
+    if (!browserSession) return [];
+
+    const { page, context } = browserSession;
+
+    try {
+      await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.google.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8'
+      });
+
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      });
+
+      await randomDelay(1000, 2500);
+
+      console.log(`🦉 KartOwl is hunting for: ${query}`);
+      const searchUrl = `https://www.daraz.pk/catalog/?q=${encodeURIComponent(query)}`;
+
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+
+      await page.evaluate(async () => {
+        window.scrollBy(0, 800);
+        await new Promise(r => setTimeout(r, 1000));
+        window.scrollBy(0, 800);
+        await new Promise(r => setTimeout(r, 1000));
+        window.scrollBy(0, 800);
+        await new Promise(r => setTimeout(r, 1000));
+      });
+
+      await page.waitForTimeout(2000);
+      await page.waitForSelector('[data-qa-locator="product-item"]', { timeout: 15000 });
+
+      const products = await page.evaluate((searchQuery) => {
+        const cards = document.querySelectorAll('[data-qa-locator="product-item"]');
+
+        return Array.from(cards).map((card: any) => {
+          const cardText = card.innerText || '';
+
+          if (cardText.toLowerCase().includes('sponsored') || cardText.toLowerCase().includes('ad\n')) {
+            return null;
+          }
+
+          const titleEl = card.querySelector('a[title]');
+          const title = titleEl?.getAttribute('title') || 'Unknown Product';
+
+          const queryWords = searchQuery.toLowerCase().split(/\s+/).filter((w: string) => w.length > 2);
+          const titleLower = title.toLowerCase();
+          const isRelevant = queryWords.some((word: string) => titleLower.includes(word));
+          if (queryWords.length > 0 && !isRelevant) {
+            return null;
+          }
+
+          const imgEl = card.querySelector('img');
+          let image = imgEl?.getAttribute('data-ks-lazyload') ||
+            imgEl?.getAttribute('data-src') ||
+            imgEl?.getAttribute('src') || '';
+
+          if (image) {
+            image = image.replace(/_\d+x\d+.*$/, '').replace(/_.webp$/, '');
+          }
+
+          let currentPrice = 0;
+          let originalPrice = 0;
+
+          const priceElements = card.querySelectorAll('span');
+          for (const el of priceElements) {
+            if (el.closest('del')) continue;
+            const text = el.textContent || el.innerText || '';
+            if (text.includes('Rs.') && /[\d,]+/.test(text)) {
+              currentPrice = parseInt(text.replace(/[^\d]/g, '')) || 0;
+              if (currentPrice > 0) break;
+            }
+          }
+
+          const delEl = card.querySelector('del');
+          if (delEl) {
+            const delText = delEl.textContent || delEl.innerText || '';
+            if (delText.includes('Rs.')) {
+              originalPrice = parseInt(delText.replace(/[^\d]/g, '')) || 0;
+            }
+          }
+
+          if (!originalPrice || originalPrice < currentPrice) {
+            originalPrice = currentPrice;
+          }
+
+          const reviewsMatch = cardText.match(/\((\d+[\d,]*)\)/);
+          let reviews = 0;
+          if (reviewsMatch) {
+            reviews = parseInt(reviewsMatch[1].replace(/,/g, ''));
+          }
+
+          let productUrl = titleEl?.getAttribute('href') || '';
+          if (productUrl.startsWith('//')) productUrl = `https:${productUrl}`;
+
+          const soldMatch = cardText.match(/(\d+[\d\.]*[kK]?)\s+Sold/i);
+
+          let hasRating = false;
+          const styleElements = card.querySelectorAll('[style*="width"]');
+          for (const el of styleElements) {
+            const widthStyle = el.getAttribute('style');
+            if (widthStyle && widthStyle.includes('%')) {
+              const num = parseInt(widthStyle.match(/(\d+)%/)?.[1] || '0');
+              if (num > 0 && num <= 100) {
+                hasRating = true;
+                break;
+              }
+            }
+          }
+
+          let inStock = true;
+          const outOfStockImg = card.querySelector('img[src*="out-of-stock"]') ||
+            card.querySelector('img[alt*="out of stock"]') ||
+            card.querySelector('[class*="out-of-stock"]');
+          const outOfStockText = cardText.toLowerCase().includes('out of stock') ||
+                                 cardText.toLowerCase().includes('sold out');
+
+          if (outOfStockImg || outOfStockText) {
+            inStock = false;
+          }
+
+          return {
+            id: Math.random().toString(36).substr(2, 9),
+            title: title,
+            currentPrice,
+            originalPrice,
+            discount: originalPrice > currentPrice ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100) : 0,
+            image,
+            marketplace: 'daraz',
+            productUrl,
+            hasRating: hasRating,
+            reviews,
+            sold: soldMatch ? soldMatch[0] : '0 Sold',
+            inStock
+          };
+        })
+          .filter(product => product !== null)
+          .slice(0, 20);
+      }, query);
+
+      return products;
+
+    } catch (error: any) {
+      console.error(`❌ Daraz Scraping failed: ${error?.message || 'Unknown error'}`);
+      return [];
+    } finally {
+      await page.close();
+      await context.close();
+    }
+  }
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/priceoye.service.ts
+--------------------------------------------------------------------------------
+import { Injectable } from '@nestjs/common';
+import { BrowserService } from './browser.service';
+import { randomDelay } from './utils/throttle.utils';
+
+@Injectable()
+export class PriceOyeService {
+  constructor(private readonly browserService: BrowserService) { }
+
+  async searchProduct(query: string) {
+    const browserSession = await this.browserService.getNewPage();
+    if (!browserSession) return [];
+
+    const { page, context } = browserSession;
+
+    try {
+      await randomDelay(500, 1500);
+
+      console.log(`🦉 KartOwl is checking PriceOye for: ${query}`);
+      const searchUrl = `https://priceoye.pk/search?q=${encodeURIComponent(query)}`;
+
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      try {
+        await page.waitForSelector('.product-list', { timeout: 10000 });
+      } catch (e) {
+        console.log("PriceOye: No standard product list found");
+        return [];
+      }
+
+      const products = await page.evaluate(() => {
+        const cards = document.querySelectorAll('.product-list .p-item, .product-list .productBox');
+
+        return Array.from(cards).slice(0, 15).map((card: any) => {
+          const anchor = card.querySelector('a');
+          const productUrl = anchor?.href || '';
+
+          const titleEl = card.querySelector('.p-title') || card.querySelector('.product-title') || card.querySelector('.p3');
+          let rawTitle = titleEl?.textContent || titleEl?.innerText || card.querySelector('img')?.alt || 'Unknown Product';
+          const title = rawTitle.replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim();
+
+          let image = '';
+          const ampImgEl = card.querySelector('amp-img');
+          if (ampImgEl) {
+            image = ampImgEl.getAttribute('src') || '';
+            if (image && image.startsWith('/')) {
+              image = 'https://priceoye.pk' + image;
+            }
+          } else {
+            const imgEl = card.querySelector('img');
+            if (imgEl) {
+              image = imgEl.getAttribute('data-src') || imgEl.getAttribute('data-original') || imgEl.src || '';
+              if (image && image.startsWith('/')) {
+                image = 'https://priceoye.pk' + image;
+              }
+            }
+          }
+
+          let currentPrice = 0;
+          let originalPrice = 0;
+
+          const currentPriceEl = card.querySelector('.price-box');
+          if (currentPriceEl) {
+            const currentPriceText = currentPriceEl.textContent || currentPriceEl.innerText || '';
+            const priceMatches = currentPriceText.match(/[\d,]+/g);
+            if (priceMatches && priceMatches.length > 0) {
+              currentPrice = parseInt(priceMatches[0].replace(/,/g, '')) || 0;
+            }
+          }
+
+          const priceDiffEl = card.querySelector('.price-diff');
+          if (priceDiffEl) {
+            const priceDiffText = priceDiffEl.textContent || priceDiffEl.innerText || '';
+            const priceMatches = priceDiffText.match(/[\d,]+/g);
+            if (priceMatches && priceMatches.length > 0) {
+              originalPrice = parseInt(priceMatches[0].replace(/,/g, '')) || 0;
+            }
+          }
+
+          if (originalPrice < currentPrice) {
+            originalPrice = currentPrice;
+          }
+
+          const discount = originalPrice > currentPrice ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100) : 0;
+
+          let rating = 0;
+          const ratingContentEl = card.querySelector('.user-rating-content');
+          if (ratingContentEl) {
+            const ratingText = ratingContentEl.textContent || ratingContentEl.innerText || '';
+            const ratingMatch = ratingText.match(/[\d.]+/);
+            if (ratingMatch) {
+              rating = parseFloat(ratingMatch[0]);
+            }
+          }
+
+          if (rating === 0) {
+            const starElements = card.querySelectorAll('.stars i, .stars img');
+            if (starElements.length > 0) {
+              rating = Math.min(starElements.length, 5);
+            }
+          }
+
+          if (rating === 0) {
+            rating = 4.5;
+          }
+
+          let reviews = 0;
+          const reviewCountEl = card.querySelector('span.rating-h7.bold');
+          if (reviewCountEl) {
+            const reviewsText = reviewCountEl.textContent || reviewCountEl.innerText || '';
+            const reviewsMatch = reviewsText.match(/[\d,]+/);
+            if (reviewsMatch) {
+              reviews = parseInt(reviewsMatch[0].replace(/,/g, '')) || 0;
+            }
+          }
+
+          if (reviews === 0) {
+            const userRatingBox = card.querySelector('.user-rating-box');
+            if (userRatingBox) {
+              const ratingBoxText = userRatingBox.textContent || userRatingBox.innerText || '';
+              const reviewsMatch = ratingBoxText.match(/[\d,]+\s*review/i);
+              if (reviewsMatch) {
+                const numberMatch = reviewsMatch[0].match(/[\d,]+/);
+                if (numberMatch) {
+                  reviews = parseInt(numberMatch[0].replace(/,/g, '')) || 0;
+                }
+              }
+            }
+          }
+
+          if (reviews === 0) {
+            reviews = 5;
+          }
+
+          let inStock = true;
+          const hasPriceDifference = !!(priceDiffEl);
+          const outOfStockImg = card.querySelector('img[src*="out-of-stock"]') ||
+            card.querySelector('img[alt*="out of stock"]') ||
+            card.querySelector('[class*="out-of-stock"]');
+          const pricesAreEqual = (originalPrice > 0 && originalPrice === currentPrice);
+
+          if (!hasPriceDifference || outOfStockImg || pricesAreEqual) {
+            inStock = false;
+          }
+
+          return {
+            id: Math.random().toString(36).substr(2, 9),
+            title,
+            currentPrice,
+            originalPrice,
+            discount,
+            image,
+            marketplace: 'priceoye',
+            productUrl,
+            rating,
+            reviews,
+            inStock
+          };
+        });
+      });
+
+      return products;
+
+    } catch (error) {
+      console.error("❌ PriceOye Scraping failed:", error);
+      return [];
+    } finally {
+      await page.close();
+      await context.close();
+    }
+  }
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/telemart.service.ts
+--------------------------------------------------------------------------------
+import { Injectable } from '@nestjs/common';
+import { BrowserService } from './browser.service';
+import { randomDelay } from './utils/throttle.utils';
+
+@Injectable()
+export class TelemartService {
+  constructor(private readonly browserService: BrowserService) { }
+
+  async searchProduct(query: string) {
+    const browserSession = await this.browserService.getNewPage();
+    if (!browserSession) return [];
+
+    const { page, context } = browserSession;
+
+    try {
+      await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.google.com/'
+      });
+
+      await randomDelay(1000, 2500);
+
+      console.log(`🦉 KartOwl is checking Telemart for: ${query}`);
+      const searchUrl = `https://telemart.pk/search?query=${encodeURIComponent(query)}`;
+
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+
+      const productCardSelector = 'a[href*="-price-in-pakistan"], .product-hover';
+      try {
+        await page.waitForSelector(productCardSelector, { timeout: 15000 });
+      } catch (e) {
+        console.warn("Telemart: No product cards loaded within timeout.");
+        return [];
+      }
+
+      const products = await page.evaluate(() => {
+        const productCardSelector = 'a[href*="-price-in-pakistan"], .product-hover';
+        const candidateAnchors = Array.from(document.querySelectorAll(productCardSelector));
+        const seenPaths = new Set<string>();
+        const validCards: any[] = [];
+
+        candidateAnchors.forEach((el: any) => {
+          const anchor = el.tagName === 'A' ? el : el.closest('a');
+          if (!anchor) return;
+
+          const href = anchor.getAttribute('href') || '';
+          if (!href || seenPaths.has(href)) return;
+
+          seenPaths.add(href);
+          const container = anchor.closest('.grid-item') || anchor.parentElement;
+          if (container) {
+            validCards.push({ container, anchor, href });
+          }
+        });
+
+        return validCards.slice(0, 15).map(({ container, anchor, href }) => {
+          const cardText = container.innerText || '';
+
+          if (cardText.toLowerCase().includes('sponsored') || cardText.toLowerCase().includes('add to cart') === false && cardText.toLowerCase().includes('out of stock') === false) {
+            if (!cardText.toLowerCase().match(/(?:rs|pkr)\.?\s*[\d,]+/i)) {
+              return null;
+            }
+          }
+
+          let productUrl = href;
+          if (productUrl && !productUrl.startsWith('http')) {
+            productUrl = 'https://telemart.pk' + (productUrl.startsWith('/') ? '' : '/') + productUrl;
+          }
+
+          const ratingTextMatch = cardText.match(/([\d\.]+)\s*\(\s*([\d,]+)\s*reviews?\s*\)/i);
+          let rating = 4.0; 
+          let reviews = 3;
+          if (ratingTextMatch) {
+            rating = parseFloat(ratingTextMatch[1]) || rating;
+            reviews = parseInt(ratingTextMatch[2].replace(/,/g, '')) || reviews;
+          }
+
+          let currentPrice = 0;
+          let originalPrice = 0;
+
+          const rupeeMatches = cardText.match(/(?:Rs|PKR)\.?\s*([\d,]+)/gi);
+          if (rupeeMatches && rupeeMatches.length > 0) {
+            const numericPrices = rupeeMatches.map((str: string) => {
+              const numStr = str.replace(/[^\d]/g, '');
+              return parseInt(numStr) || 0;
+            }).filter((p: number) => p > 0);
+
+            if (numericPrices.length > 0) {
+              currentPrice = Math.min(...numericPrices);
+              originalPrice = Math.max(...numericPrices);
+            }
+          }
+
+          if (originalPrice < currentPrice || originalPrice === 0) {
+            originalPrice = currentPrice;
+          }
+
+          const img = container.querySelector('img');
+          const image = img?.getAttribute('src') || img?.getAttribute('data-src') || '';
+
+          let rawTitle = img?.getAttribute('alt') || container.querySelector('h3')?.textContent || anchor.getAttribute('title') || 'Product Listing';
+          
+          let title = rawTitle
+            .replace(/\d+%\s*off/gi, '')
+            .replace(/pkr\.?\s*[\d,]+/gi, '')
+            .replace(/rs\.?\s*[\d,]+/gi, '')
+            .replace(/[\d\.]+\s*\(\s*[\d,]+\s*reviews?\s*\)/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+          if (title.length < 5) {
+            title = rawTitle.trim();
+          }
+
+          let inStock = true;
+          if (cardText.toLowerCase().includes('out of stock') || cardText.toLowerCase().includes('sold out')) {
+            inStock = false;
+          }
+
+          return {
+            id: Math.random().toString(36).substr(2, 9),
+            title,
+            currentPrice,
+            originalPrice,
+            discount: originalPrice > currentPrice ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100) : 0,
+            image,
+            marketplace: 'telemart',
+            productUrl,
+            rating,
+            reviews,
+            inStock
+          };
+        }).filter(item => item !== null);
+      });
+
+      return products;
+
+    } catch (e: any) {
+      console.error(`❌ Telemart Scraping failed: ${e?.message || 'Unknown error'}`);
+      return [];
+    } finally {
+      await page.close();
+      await context.close();
+    }
+  }
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/olx.service.ts
+--------------------------------------------------------------------------------
+import { Injectable, Logger } from '@nestjs/common';
+import { BrowserService } from './browser.service';
+import { randomDelay } from './utils/throttle.utils';
+
+@Injectable()
+export class OlxService {
+  private readonly logger = new Logger(OlxService.name);
+  private readonly BASE_URL = 'https://www.olx.com.pk';
+
+  constructor(private readonly browserService: BrowserService) { }
+
+  async searchProduct(query: string) {
+    this.logger.log(`🔍 KartOwl is checking OLX for: ${query}`);
+    const browserSession = await this.browserService.getNewPage();
+    if (!browserSession) return [];
+
+    const { page, context } = browserSession;
+
+    try {
+      await randomDelay(500, 1500);
+
+      const searchUrl = `${this.BASE_URL}/items/q-${encodeURIComponent(query)}`;
+      await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      try {
+        await page.waitForSelector('li[aria-label="Listing"], li article', { timeout: 10000 });
+      } catch (e) {
+        this.logger.warn(`OLX: No listings found for "${query}"`);
+        return [];
+      }
+
+      const products = await page.evaluate(() => {
+        const items: any[] = [];
+        const cards = document.querySelectorAll('li[aria-label="Listing"], li article, .listing-card');
+
+        cards.forEach((card: any) => {
+          try {
+            const cardText = card.innerText || '';
+            if (cardText.toLowerCase().includes('buy with delivery') ||
+              cardText.toLowerCase().includes('delivery') && cardText.toLowerCase().includes('buy')) {
+              return;
+            }
+
+            const anchor = card.querySelector('a');
+            if (!anchor) return;
+
+            let productUrl = anchor.getAttribute('href');
+            if (productUrl && !productUrl.startsWith('http')) {
+              productUrl = 'https://www.olx.com.pk' + productUrl;
+            }
+
+            let title = card.querySelector('[aria-label="Title"]')?.textContent ||
+              card.querySelector('h2')?.textContent ||
+              anchor.getAttribute('title') ||
+              card.querySelector('img')?.getAttribute('alt') ||
+              'Unknown Listing';
+
+            title = title.trim();
+
+            let currentPrice = 0;
+            let priceText = '';
+            const textContent = card.innerText || '';
+
+            const priceTextMatch = textContent.match(/Rs\.?\s*[\d,.]+\s*(?:Lac)?/i);
+            if (priceTextMatch) {
+              priceText = priceTextMatch[0].trim();
+
+              const numericMatch = priceText.match(/[\d,.]+/);
+              if (numericMatch) {
+                const numericStr = numericMatch[0].replace(/,/g, '');
+                if (priceText.toLowerCase().includes('lac')) {
+                  currentPrice = parseFloat(numericStr) * 100000;
+                } else {
+                  currentPrice = parseInt(numericStr);
+                }
+              }
+            }
+
+            const imgEl = card.querySelector('img');
+            let image = imgEl?.getAttribute('src') || imgEl?.getAttribute('data-src') || '';
+
+            let location = 'Pakistan';
+            const locationEl = card.querySelector('[aria-label="Location"]');
+            if (locationEl) {
+              location = locationEl.textContent?.trim() || location;
+            } else {
+              const metaText = card.innerText.split('\n');
+              if (metaText.length > 2) {
+                const commonCities = ['Lahore', 'Karachi', 'Islamabad', 'Rawalpindi', 'Multan', 'Peshawar'];
+                for (const line of metaText) {
+                  if (commonCities.some(city => line.includes(city))) {
+                    location = line.trim();
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (title && currentPrice > 0) {
+              items.push({
+                id: Math.random().toString(36).substr(2, 9),
+                title,
+                currentPrice,
+                originalPrice: currentPrice,
+                discount: 0,
+                image,
+                marketplace: 'olx',
+                productUrl,
+                rating: 0,
+                reviews: 0,
+                inStock: true,
+                location: location,
+                priceText: priceText
+              });
+            }
+          } catch (err) {
+            // Skip
+          }
+        });
+
+        return items.slice(0, 15);
+      });
+
+      return products;
+
+    } catch (error: any) {
+      this.logger.error(`❌ OLX Scraping failed: ${error.message}`);
+      return [];
+    } finally {
+      await page.close();
+      await context.close();
+    }
+  }
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/history.service.ts
+--------------------------------------------------------------------------------
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, MoreThan } from 'typeorm';
+import { ProductHistory } from './entities/product-history.entity';
+import { normalizeUrl } from './utils/url.utils';
+
+interface AddPricePointParams {
+  url: string;
+  title: string;
+  price: number;
+  marketplace: string;
+  originalPrice?: number;
+  discount?: number;
+  imageUrl?: string;
+}
+
+@Injectable()
+export class HistoryService {
+  constructor(
+    @InjectRepository(ProductHistory)
+    private historyRepository: Repository<ProductHistory>,
+  ) { }
+
+  async addPricePoint(params: AddPricePointParams) {
+    const cleanUrl = normalizeUrl(params.url);
+
+    const existingToday = await this.historyRepository.createQueryBuilder('history')
+      .where('history.productUrl = :url', { url: cleanUrl })
+      .andWhere('history.scrapedAt > current_date')
+      .getOne();
+
+    if (existingToday) return;
+
+    const entryData: Partial<ProductHistory> = {
+      productUrl: cleanUrl,
+      productTitle: params.title,
+      price: params.price,
+      marketplace: params.marketplace,
+      originalPrice: params.originalPrice ?? undefined,
+      discount: params.discount ?? 0,
+      imageUrl: params.imageUrl ?? undefined,
+    };
+
+    const entry = this.historyRepository.create(entryData);
+    return await this.historyRepository.save(entry);
+  }
+
+  async getHistory(rawUrl: string) {
+    const cleanUrl = normalizeUrl(rawUrl);
+    return await this.historyRepository.find({
+      where: { productUrl: cleanUrl },
+      order: { scrapedAt: 'ASC' }
+    });
+  }
+
+  async getTrendingDeals() {
+    const marketplaces = ['daraz', 'priceoye', 'telemart', 'olx'];
+
+    const results = await Promise.all(
+      marketplaces.map(mp =>
+        this.historyRepository.find({
+          where: {
+            marketplace: mp,
+            discount: MoreThan(5),
+          },
+          order: {
+            discount: 'DESC',
+            scrapedAt: 'DESC',
+          },
+          take: 5,
+        })
+      )
+    );
+
+    const deals = results.flat().sort(() => Math.random() - 0.5);
+
+    const seen = new Set<string>();
+    const uniqueDeals = deals.filter(deal => {
+      if (seen.has(deal.productUrl)) return false;
+      seen.add(deal.productUrl);
+      return true;
+    }).slice(0, 20);
+
+    return uniqueDeals.map(deal => ({
+      id: deal.id,
+      title: deal.productTitle,
+      image: deal.imageUrl || '',
+      marketplace: deal.marketplace,
+      currentPrice: deal.price,
+      originalPrice: deal.originalPrice,
+      discount: deal.discount,
+      productUrl: deal.productUrl,
+      inStock: true,
+    }));
+  }
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/alerts/alerts.service.ts
+--------------------------------------------------------------------------------
+import { Injectable } from '@nestjs/common';
+import * as nodemailer from 'nodemailer';
+
+@Injectable()
+export class AlertsService {
+  private transporter;
+
+  constructor() {
+    this.transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
+  }
+
+  async sendConfirmation(email: string, productUrl: string, targetPrice: number) {
+    await this.transporter.sendMail({
+      from: '"KartOwl Alerts" <noreply@kartowl.com>',
+      to: email,
+      subject: 'Price Alert Set! 🔔',
+      text: `You will be notified when the price drops below Rs ${targetPrice}.\nLink: ${productUrl}`,
+      html: `<b>Alert Set!</b><br>We'll watch this product for you: <a href="${productUrl}">Link</a>`
+    });
+  }
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/dto/search.dto.ts
+--------------------------------------------------------------------------------
+import { IsString, IsNotEmpty, MaxLength, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+
+export class SearchDto {
+    @IsString()
+    @IsNotEmpty({ message: 'Search query is required' })
+    @MinLength(2, { message: 'Search query must be at least 2 characters' })
+    @MaxLength(100, { message: 'Search query must not exceed 100 characters' })
+    @Transform(({ value }) => sanitizeInput(value))
+    q: string;
+}
+
+function sanitizeInput(input: string): string {
+    if (typeof input !== 'string') return '';
+
+    return input
+        .trim()
+        .replace(/<[^>]*>/g, '')
+        .replace(/javascript:/gi, '')
+        .replace(/on\w+=/gi, '')
+        .replace(/[<>"'`;(){}[\]]/g, '')
+        .replace(/\s+/g, ' ');
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/entities/product-history.entity.ts
+--------------------------------------------------------------------------------
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
+
+@Entity()
+export class ProductHistory {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  productTitle: string;
+
+  @Column()
+  marketplace: string;
+
+  @Column('int')
+  price: number;
+
+  @Column('int', { nullable: true })
+  originalPrice: number;
+
+  @Column('int', { nullable: true, default: 0 })
+  discount: number;
+
+  @Column()
+  productUrl: string;
+
+  @Column({ nullable: true })
+  imageUrl: string;
+
+  @CreateDateColumn()
+  scrapedAt: Date;
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/utils/product-sorting.utils.ts
+--------------------------------------------------------------------------------
+interface Product {
+    id: string;
+    title: string;
+    currentPrice: number;
+    originalPrice?: number;
+    discount?: number;
+    rating?: number;
+    reviews?: number;
+    marketplace: string;
+    inStock?: boolean;
+    [key: string]: any;
+}
+
+export function calculateProductScore(product: Product): number {
+    let score = 0;
+
+    if (product.discount && product.discount > 0) {
+        score += Math.min(product.discount, 50) * 0.6;
+    }
+
+    if (product.reviews && product.reviews > 0) {
+        score += Math.min(Math.log10(product.reviews + 1) * 10, 25);
+    }
+
+    if (product.rating && product.rating > 0) {
+        score += product.rating * 4;
+    }
+
+    if (product.currentPrice > 0) {
+        if (product.currentPrice >= 1000 && product.currentPrice <= 100000) {
+            score += 10;
+        } else if (product.currentPrice > 100000) {
+            score += 5;
+        }
+    }
+
+    if (product.inStock !== false) {
+        score += 5;
+    }
+
+    if (product.image && product.image.length > 0) {
+        score += 5;
+    }
+
+    return score;
+}
+
+export function smartMixProducts(
+    daraz: Product[],
+    priceoye: Product[],
+    telemart: Product[],
+    olx: Product[]
+): Product[] {
+    const marketplaces = [
+        { name: 'daraz', products: [...daraz] },
+        { name: 'priceoye', products: [...priceoye] },
+        { name: 'telemart', products: [...telemart] },
+        { name: 'olx', products: [...olx] },
+    ];
+
+    marketplaces.forEach(mp => {
+        mp.products.sort((a, b) => calculateProductScore(b) - calculateProductScore(a));
+    });
+
+    const result: Product[] = [];
+    const clusterSize = 2;
+
+    for (let round = 0; round < 3; round++) {
+        for (const mp of marketplaces) {
+            if (mp.products.length > round) {
+                result.push(mp.products[round]);
+            }
+        }
+    }
+
+    const addedIds = new Set(result.map(p => p.id));
+    marketplaces.forEach(mp => {
+        mp.products = mp.products.filter(p => !addedIds.has(p.id));
+    });
+
+    let hasMore = true;
+    while (hasMore) {
+        hasMore = false;
+        for (const mp of marketplaces) {
+            const cluster = mp.products.splice(0, clusterSize);
+            if (cluster.length > 0) {
+                result.push(...cluster);
+                hasMore = true;
+            }
+        }
+    }
+
+    return result;
+}
+
+export function interleaveArrays<T>(...arrays: T[][]): T[] {
+    const maxLength = Math.max(...arrays.map(arr => arr.length), 0);
+    const result: T[] = [];
+    for (let i = 0; i < maxLength; i++) {
+        for (const arr of arrays) {
+            if (i < arr.length) result.push(arr[i]);
+        }
+    }
+    return result;
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/utils/throttle.utils.ts
+--------------------------------------------------------------------------------
+export function randomDelay(minMs: number = 1000, maxMs: number = 3000): Promise<void> {
+    const delay = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+    return new Promise(resolve => setTimeout(resolve, delay));
+}
+
+export function delayWithJitter(baseMs: number, jitterPercent: number = 30): Promise<void> {
+    const jitter = baseMs * (jitterPercent / 100);
+    const actualDelay = baseMs + (Math.random() * jitter * 2 - jitter);
+    return new Promise(resolve => setTimeout(resolve, Math.max(0, actualDelay)));
+}
+
+export async function withRetry<T>(
+    fn: () => Promise<T>,
+    retries: number = 2,
+    delayMs: number = 2000
+): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            lastError = error as Error;
+            console.warn(`Attempt ${attempt + 1} failed:`, error);
+
+            if (attempt < retries) {
+                await delayWithJitter(delayMs);
+            }
+        }
+    }
+
+    throw lastError;
+}
+
+--------------------------------------------------------------------------------
+[BACKEND] src/utils/url.utils.ts
+--------------------------------------------------------------------------------
+export function normalizeUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    urlObj.protocol = 'https:';
+
+    const paramsToRemove = ['click_id', 'gclid', 'fbclid', 'source', 'spm', 'scm'];
+    paramsToRemove.forEach(param => urlObj.searchParams.delete(param));
+    
+    if (url.includes('daraz.pk')) {
+       return url.split('?')[0]; 
+    }
+
+    return urlObj.toString();
+  } catch (e) {
+    return url; 
+  }
+}
+
+================================================================================
+5. DOCKER & UTILITIES
+================================================================================
+
+--------------------------------------------------------------------------------
+docker-compose.yml
+--------------------------------------------------------------------------------
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: kartowl-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: kartowl_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: kartowl-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+
+================================================================================
+                    🦉 END OF UNDERSTANDING DOCUMENT 🦉
+================================================================================
