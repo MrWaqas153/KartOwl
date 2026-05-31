@@ -45,6 +45,7 @@
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "^11.13.1",
+    "groq-sdk": "^1.2.1",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.453.0",
     "markdown-to-jsx": "^9.6.1",
