@@ -1,8 +1,8 @@
-export type MainOption = 'known' | 'unknown' | null;
+export type MainOption = 'known' | 'unknown' | 'several' | null;
 export type ResearchType = 'single' | 'multi' | null;
 export type Option = 'research' | 'compare' | 'recommend' | null;
 export type Importance = 'Not important' | 'Important' | 'Very Important';
-export type Step = 1 | 1.25 | 1.5 | 2 | 3 | 5;
+export type Step = 1 | 1.25 | 1.5 | 2 | 3 | 5 | 6 | 6.5;
 
 export interface Feature {
     id: number;
@@ -112,4 +112,12 @@ export interface ReviewResult {
     verdict: "Recommended" | "Not Recommended";
     matchScore: number;
     explanation: string;
+    specs?: string[];
+}
+
+export interface SeveralProductResult {
+    name: string;
+    specs: { icon: string; label: string; value: string }[];
+    review: string;
+    score: number;
 }

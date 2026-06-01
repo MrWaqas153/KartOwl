@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import type { MainOption } from "@/types/product";
-import { Search, HelpCircle } from "lucide-react";
+import { Search, HelpCircle, LayoutGrid } from "lucide-react";
 
 interface StepOneProps {
     onOptionSelect: (option: MainOption) => void;
@@ -30,6 +30,15 @@ export function StepOne({ onOptionSelect }: StepOneProps) {
                     No, help me research
                 </Button>
             </div>
+            <Button
+                size="lg"
+                variant="outline"
+                className="w-full flex items-center justify-center border-brand-purple text-brand-purple hover:bg-purple-50"
+                onClick={() => onOptionSelect('several')}
+            >
+                <LayoutGrid className="mr-2 h-5 w-5" />
+                Show me several products
+            </Button>
         </div>
     );
 }

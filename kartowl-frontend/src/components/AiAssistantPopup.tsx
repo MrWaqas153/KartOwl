@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom';
 import { Button } from "@/components/ui/button";
 import { Bot, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getApiLogs, clearApiLogs, fetchProductInfo, fetchProductComparisons, fetchProductRecommendations, performDeepResearch, generateComparisonReport, reviewProduct } from '@/lib/gemini';
+import { getApiLogs, clearApiLogs, fetchProductInfo, fetchProductComparisons, fetchProductRecommendations, performDeepResearch, generateComparisonReport, reviewProduct, fetchSeveralProducts } from '@/lib/gemini';
 import { performResearch, performMultiProductResearch } from '@/lib/research';
-import type { MainOption, ResearchType, Option, Product, Step, ResearchResults, ReviewResult } from '@/types/product';
+import type { MainOption, ResearchType, Option, Product, Step, ResearchResults, ReviewResult, SeveralProductResult } from '@/types/product';
 import { ErrorDialog } from "@/components/ui/error-dialog";
 import { StepOne } from "./ProductReviewer/StepOne";
 import { StepOnePointTwoFive } from "./ProductReviewer/StepOnePointTwoFive";
@@ -14,6 +14,8 @@ import { StepTwo } from "./ProductReviewer/StepTwo";
 import { StepThree } from "./ProductReviewer/StepThree";
 import { StepFour } from "./ProductReviewer/StepFour";
 import { StepFive } from "./ProductReviewer/StepFive";
+import { StepSeveralInput } from "./ProductReviewer/StepSeveralInput";
+import { StepSeveralResults } from "./ProductReviewer/StepSeveralResults";
 
 export function AiAssistantPopup() {
     const [open, setOpen] = useState(false);
@@ -27,6 +29,8 @@ export function AiAssistantPopup() {
     const [loading, setLoading] = useState(false);
     const [newFeature, setNewFeature] = useState("");
     const [research, setResearch] = useState<ResearchResults | ReviewResult | null>(null);
+    const [severalResults, setSeveralResults] = useState<SeveralProductResult[] | null>(null);
+    const [severalQuery, setSeveralQuery] = useState("");
     const { toast } = useToast();
 
     const resetState = () => {
@@ -38,6 +42,8 @@ export function AiAssistantPopup() {
         setUserPreferences("");
         setProducts([]);
         setResearch(null);
+        setSeveralResults(null);
+        setSeveralQuery("");
         clearApiLogs();
     };
 
@@ -45,6 +51,8 @@ export function AiAssistantPopup() {
         setMainOption(selectedOption);
         if (selectedOption === 'known') {
             setStep(1.25);
+        } else if (selectedOption === 'several') {
+            setStep(6);
         } else {
             setOption('recommend');
             setStep(2);
@@ -112,6 +120,26 @@ export function AiAssistantPopup() {
         }
     };
 
+    const handleSeveralSubmit = async () => {
+        if (!input.trim()) return;
+        setLoading(true);
+        setSeveralQuery(input);
+        try {
+            const results = await fetchSeveralProducts(input);
+            setSeveralResults(results);
+            setStep(6.5);
+        } catch (error) {
+            console.error(error);
+            toast({
+                title: "Error",
+                description: "Failed to fetch products. Please try again.",
+                variant: "destructive"
+            });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleStartResearch = async () => {
         setLoading(true);
         try {
@@ -152,7 +180,6 @@ export function AiAssistantPopup() {
             if (option === 'recommend') setStep(2);
             else if (option === 'compare') setStep(1.5);
             else setStep(1.5);
-
         } else if (step === 5) {
             if (option === 'research') {
                 setStep(1.5);
@@ -160,6 +187,13 @@ export function AiAssistantPopup() {
                 setStep(3);
             }
             setResearch(null);
+        } else if (step === 6) {
+            setStep(1);
+            setInput("");
+        } else if (step === 6.5) {
+            setStep(6);
+            setSeveralResults(null);
+            setInput("");
         }
     };
 
@@ -174,27 +208,22 @@ export function AiAssistantPopup() {
                 }}
                 onClick={() => setOpen(true)}
             >
-                {/* Main container - icon only on mobile, pill on desktop */}
                 <div
                     className="flex items-center gap-3 bg-white rounded-full p-1.5 md:pl-4 md:pr-2 md:py-2 shadow-xl border border-gray-100 transition-all duration-300 hover:shadow-2xl hover:scale-105"
                     style={{
                         boxShadow: '0 4px 20px rgba(124, 58, 237, 0.25), 0 2px 8px rgba(0, 0, 0, 0.1)'
                     }}
                 >
-                    {/* Text label - hidden on mobile */}
                     <span className="hidden md:inline text-gray-700 font-semibold text-sm whitespace-nowrap">
                         Ask <span className="text-brand-purple">Owl AI</span>
                     </span>
 
-                    {/* Icon circle */}
                     <div className="relative">
                         <div
                             className="h-10 w-10 rounded-full bg-brand-purple flex items-center justify-center transition-transform duration-200 group-hover:scale-110"
                         >
                             <Bot className="h-5 w-5 text-white" />
                         </div>
-
-                        {/* Small green dot indicator */}
                         <div className="absolute -top-0.5 -right-0.5 h-3 w-3 bg-green-500 rounded-full border-2 border-white animate-pulse" />
                     </div>
                 </div>
@@ -203,7 +232,6 @@ export function AiAssistantPopup() {
             {/* Chat Popup */}
             {open && (
                 <>
-                    {/* Backdrop for mobile */}
                     <div
                         className="fixed inset-0 bg-black/30 z-[99997] md:hidden"
                         onClick={() => setOpen(false)}
@@ -284,7 +312,7 @@ export function AiAssistantPopup() {
                                     newFeature={newFeature}
                                     option={option}
                                     onNewFeatureChange={setNewFeature}
-                                    onAddFeature={() => { }} // Simplified for brevity
+                                    onAddFeature={() => { }}
                                     onImportanceChange={(pIdx, fId, imp) => {
                                         const newProducts = [...products];
                                         const feature = newProducts[pIdx].features.find(f => f.id === fId);
@@ -303,6 +331,24 @@ export function AiAssistantPopup() {
                             {step === 5 && research && (
                                 <StepFive
                                     research={research}
+                                    onBack={handleBack}
+                                />
+                            )}
+
+                            {step === 6 && (
+                                <StepSeveralInput
+                                    input={input}
+                                    loading={loading}
+                                    onInputChange={setInput}
+                                    onSubmit={handleSeveralSubmit}
+                                    onBack={handleBack}
+                                />
+                            )}
+
+                            {step === 6.5 && severalResults && (
+                                <StepSeveralResults
+                                    results={severalResults}
+                                    query={severalQuery}
                                     onBack={handleBack}
                                 />
                             )}

@@ -1,5 +1,5 @@
 import Groq from 'groq-sdk';
-import type { ProductInfo, ProductComparison, ProductRecommendations, ProductReport, FeatureSet, ReviewResult } from '@/types/product';
+import type { ProductInfo, ProductComparison, ProductRecommendations, ProductReport, FeatureSet, ReviewResult, SeveralProductResult } from '@/types/product';
 
 const groq = new Groq({
     apiKey: import.meta.env.VITE_GROQ_API_KEY || '',
@@ -182,4 +182,47 @@ Respond in this exact JSON format:
 }`;
 
     return generateJson<ReviewResult>(prompt, 'reviewProduct');
+}
+
+export async function fetchSeveralProducts(userQuery: string): Promise<SeveralProductResult[]> {
+    const prompt = `You are a Pakistani tech product expert.
+The user wants: "${userQuery}"
+
+Suggest exactly 4 best products that match this query. For each product:
+1. Give the exact product name (real, available in Pakistan)
+2. Give 4 key specs relevant to this product type (e.g. for mobiles: Camera, Display, Processor, Battery; for laptops: Processor, RAM, Storage, Display)
+3. Give a 1-2 sentence real-world review summarizing actual performance and notable pros/cons
+4. Give a score out of 100
+
+Use these icons based on spec type:
+- Camera/Photo → 📷
+- Display/Screen → 🖥️
+- Processor/CPU → ⚡
+- Battery → 🔋
+- RAM/Memory → 🧠
+- Storage/SSD → 💾
+- Design/Build → ✨
+- Price/Value → 💰
+- Audio/Sound → 🔊
+- Connectivity/5G → 📶
+
+Respond in this exact JSON format:
+{
+  "products": [
+    {
+      "name": "Product Name",
+      "specs": [
+        { "icon": "📷", "label": "Camera", "value": "50MP + 12MP OIS" },
+        { "icon": "🖥️", "label": "Display", "value": "6.7\" AMOLED 120Hz" },
+        { "icon": "⚡", "label": "Processor", "value": "Snapdragon 8 Gen 2" },
+        { "icon": "🔋", "label": "Battery", "value": "5000mAh, 45W charging" }
+      ],
+      "review": "Excellent camera performance with great night mode. Battery life could be better for heavy users.",
+      "score": 88
+    }
+  ]
+}`;
+
+    const res = await generateJson<{ products: SeveralProductResult[] }>(prompt, 'fetchSeveralProducts');
+    return res.products;
 }
