@@ -54,8 +54,10 @@ export function AiAssistantPopup() {
         } else if (selectedOption === 'several') {
             setStep(6);
         } else {
-            setOption('recommend');
-            setStep(2);
+            // 'unknown' = help me research → seedha product input
+            setOption('research');
+            setResearchType('single');
+            setStep(1.5);
         }
     };
 
@@ -99,7 +101,6 @@ export function AiAssistantPopup() {
                         name: c.key,
                         importance: 'Important' as const
                     }));
-
                     setProducts([
                         { name: 'Features', features: featureList },
                         ...recs.recommendations.map(r => ({ name: r.name, features: [] }))
@@ -173,7 +174,7 @@ export function AiAssistantPopup() {
         if (step === 1.25) {
             setStep(1);
         } else if (step === 1.5) {
-            setStep(1.25);
+            setStep(1);  // back to step 1 directly
         } else if (step === 2) {
             setStep(1);
         } else if (step === 3) {
@@ -199,29 +200,20 @@ export function AiAssistantPopup() {
 
     return createPortal(
         <>
-            {/* Floating AI Assistant - Clean pill design */}
             <div
                 className="fixed bottom-24 right-4 md:bottom-8 md:right-6 cursor-pointer group"
-                style={{
-                    position: 'fixed',
-                    zIndex: 99999,
-                }}
+                style={{ position: 'fixed', zIndex: 99999 }}
                 onClick={() => setOpen(true)}
             >
                 <div
                     className="flex items-center gap-3 bg-white rounded-full p-1.5 md:pl-4 md:pr-2 md:py-2 shadow-xl border border-gray-100 transition-all duration-300 hover:shadow-2xl hover:scale-105"
-                    style={{
-                        boxShadow: '0 4px 20px rgba(124, 58, 237, 0.25), 0 2px 8px rgba(0, 0, 0, 0.1)'
-                    }}
+                    style={{ boxShadow: '0 4px 20px rgba(124, 58, 237, 0.25), 0 2px 8px rgba(0, 0, 0, 0.1)' }}
                 >
                     <span className="hidden md:inline text-gray-700 font-semibold text-sm whitespace-nowrap">
                         Ask <span className="text-brand-purple">Owl AI</span>
                     </span>
-
                     <div className="relative">
-                        <div
-                            className="h-10 w-10 rounded-full bg-brand-purple flex items-center justify-center transition-transform duration-200 group-hover:scale-110"
-                        >
+                        <div className="h-10 w-10 rounded-full bg-brand-purple flex items-center justify-center transition-transform duration-200 group-hover:scale-110">
                             <Bot className="h-5 w-5 text-white" />
                         </div>
                         <div className="absolute -top-0.5 -right-0.5 h-3 w-3 bg-green-500 rounded-full border-2 border-white animate-pulse" />
@@ -229,20 +221,16 @@ export function AiAssistantPopup() {
                 </div>
             </div>
 
-            {/* Chat Popup */}
             {open && (
                 <>
                     <div
                         className="fixed inset-0 bg-black/30 z-[99997] md:hidden"
-                        onClick={() => setOpen(false)}
+                        onClick={() => { setOpen(false); resetState(); }}
                     />
                     <div
                         className="fixed bottom-36 left-4 right-4 md:bottom-24 md:left-auto md:right-6 md:w-[420px] max-h-[60vh] md:max-h-[70vh] rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden z-[99998] animate-in fade-in slide-in-from-bottom-4 duration-300"
-                        style={{
-                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)'
-                        }}
+                        style={{ boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05)' }}
                     >
-                        {/* Header */}
                         <div className="bg-brand-purple px-4 py-3 flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <Bot className="h-5 w-5 text-white" />
@@ -260,7 +248,7 @@ export function AiAssistantPopup() {
                                     </Button>
                                 )}
                                 <button
-                                    onClick={() => setOpen(false)}
+                                    onClick={() => { setOpen(false); resetState(); }}
                                     className="text-white/80 hover:text-white hover:bg-white/10 rounded-full p-1 transition-colors"
                                 >
                                     <X className="h-5 w-5" />
@@ -268,13 +256,13 @@ export function AiAssistantPopup() {
                             </div>
                         </div>
 
-                        {/* Content */}
                         <div className="p-4 overflow-y-auto max-h-[calc(70vh-56px)]">
                             {step === 1 && <StepOne onOptionSelect={handleMainOptionSelect} />}
 
                             {step === 1.25 && (
                                 <StepOnePointTwoFive
                                     onResearchTypeSelect={handleResearchTypeSelect}
+                                    onMainOptionSelect={handleMainOptionSelect}
                                     onBack={handleBack}
                                 />
                             )}
@@ -320,19 +308,14 @@ export function AiAssistantPopup() {
                                         setProducts(newProducts);
                                     }}
                                     onBack={handleBack}
-                                    onContinue={() => {
-                                        handleStartResearch();
-                                    }}
+                                    onContinue={() => { handleStartResearch(); }}
                                     loading={loading}
                                     onProductsChange={setProducts}
                                 />
                             )}
 
                             {step === 5 && research && (
-                                <StepFive
-                                    research={research}
-                                    onBack={handleBack}
-                                />
+                                <StepFive research={research} onBack={handleBack} />
                             )}
 
                             {step === 6 && (
